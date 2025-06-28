@@ -1,0 +1,14 @@
+# ignoring python native files
+__pycache__
+
+# ignoring hidden files/directories
+.*
+
+# ignore database file
+*.sqlite3
+
+# ignoring locally stored data
+*.txt
+*.png
+*.mp3
+*.mp4
