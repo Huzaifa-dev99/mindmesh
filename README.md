@@ -27,7 +27,7 @@ A powerful FastAPI-based backend for handling natural language queries, audio in
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/mindmesh.git
+git clone https://github.com/Huzaifa-dev99/mindmesh.git
 cd mindmesh
 
 # (Optional) Create a virtual environment
