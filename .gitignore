@@ -131,3 +131,20 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# MindMesh specific
+# Database files
+*.db
+*.sqlite3
+
+# AI model caches
+.cache/
+.huggingface/
+
+# Temporary files
+tmp/
+temp/

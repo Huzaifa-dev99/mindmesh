@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mindmesh-backend"
+version = "0.1.0"
+description = "Backend for MindMesh AI journaling application"
+authors = [
+    {name = "MindMesh Team"},
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+    "asyncpg",
+    "alembic",
+    "psycopg2-binary",
+    "pydantic-settings",
+    "qdrant-client",
+    "httpx",
+    "python-dotenv",
+    "pytest",
+]
+
+[tool.setuptools]
+packages = ["app"]
