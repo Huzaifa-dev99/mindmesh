@@ -12,6 +12,7 @@ Architecture decisions:
 - Separates engine creation from session management for testability
 """
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from typing import AsyncGenerator
@@ -21,7 +22,7 @@ from app.core.config import settings
 # Create async engine with connection pooling
 # Uses PostgreSQL async driver (asyncpg) for optimal performance
 engine = create_async_engine(
-    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
+    settings.ASYNC_DATABASE_URL,
     echo=settings.DEBUG,  # SQL query logging in development
     future=True,  # Use SQLAlchemy 2.0 style
 )
@@ -53,18 +54,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         finally:
             await session.close()  # Always close the session
 
-# TODO: Add database initialization function
-# async def init_db():
-#     """Create all tables defined in models."""
-#     async with engine.begin() as conn:
-#         await conn.run_sync(Base.metadata.create_all)
-
-# TODO: Add database health check
-# async def check_db_connection() -> bool:
-#     """Verify database connectivity."""
-#     try:
-#         async with engine.begin() as conn:
-#             await conn.execute(text("SELECT 1"))
-#         return True
-#     except Exception:
-#         return False
+async def check_db_connection() -> bool:
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False

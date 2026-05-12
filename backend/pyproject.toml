@@ -10,18 +10,33 @@ authors = [
     {name = "MindMesh Team"},
 ]
 dependencies = [
-    "fastapi",
+    "fastapi>=0.115.13,<0.116",
+    "starlette>=0.40,<0.47",
     "uvicorn[standard]",
     "sqlalchemy",
     "asyncpg",
     "alembic",
     "psycopg2-binary",
     "pydantic-settings",
+    "email-validator",
     "qdrant-client",
+    "fastembed",
     "httpx",
+    "python-jose[cryptography]",
+    "passlib",
     "python-dotenv",
     "pytest",
+    "pytest-asyncio",
 ]
 
-[tool.setuptools]
-packages = ["app"]
+[project.optional-dependencies]
+dev = ["ruff", "mypy"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

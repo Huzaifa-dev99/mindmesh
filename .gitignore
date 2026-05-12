@@ -136,6 +136,12 @@ Thumbs.db
 .streamlit/secrets.toml
 .streamlit/config.toml
 
+# Node / React frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
 # MindMesh specific
 # Database files
 *.db
