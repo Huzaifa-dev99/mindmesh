@@ -5,6 +5,12 @@ export default {
   theme: {
     extend: {
       colors: {
+        app: "#0f1115",
+        foreground: "#f3f4f6",
+        soft: "rgba(243,244,246,0.74)",
+        muted: "rgba(243,244,246,0.46)",
+        accent: "#9ae6b4",
+        border: "rgba(255,255,255,0.09)",
         ink: {
           950: "#07080d",
           900: "#0d111a",

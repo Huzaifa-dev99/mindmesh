@@ -75,6 +75,8 @@ Important variables:
 - `GROQ_API_KEY`: Groq API key
 - `SECRET_KEY`: JWT signing secret
 - `CORS_ORIGINS`: comma-separated frontend origins
+- `WORKSPACE_PIN`: local single-user frontend passcode, default `0000`
+- `SINGLE_USER_EMAIL`, `SINGLE_USER_PASSWORD`: internal local backend account used after unlock
 
 ## Development
 

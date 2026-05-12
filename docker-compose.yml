@@ -52,6 +52,9 @@ services:
       - "8501:8501"
     environment:
       VITE_API_BASE_URL: http://localhost:8000
+      VITE_WORKSPACE_PIN: ${WORKSPACE_PIN:-0000}
+      VITE_SINGLE_USER_EMAIL: ${SINGLE_USER_EMAIL:-local@mindmesh.local}
+      VITE_SINGLE_USER_PASSWORD: ${SINGLE_USER_PASSWORD:-mindmesh-local-workspace-password}
     depends_on:
       - backend
     volumes:
