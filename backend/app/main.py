@@ -16,7 +16,7 @@ from app.api.router import api_router
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestLoggingMiddleware
-from app.db.qdrant import ensure_collection
+from app.db.qdrant import ensure_agent_collections, ensure_collection
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI):
     logger.info("mindmesh_backend_starting env=%s version=%s", settings.APP_ENV, settings.VERSION)
     try:
         ensure_collection()
+        ensure_agent_collections()
     except Exception:
         logger.exception("qdrant_collection_init_failed")
     yield

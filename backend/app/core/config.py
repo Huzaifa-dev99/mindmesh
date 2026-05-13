@@ -39,8 +39,19 @@ class Settings(BaseSettings):
     # Vector database configuration
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION: str = "mindmesh_memories"
+    QDRANT_NOTES_COLLECTION: str = "notes"
+    QDRANT_DOCUMENTS_COLLECTION: str = "documents"
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
     EMBEDDING_DIMENSION: int = 384
+
+    # Optional tools and object storage
+    TAVILY_API_KEY: str = ""
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "mindmesh"
+    MINIO_SECRET_KEY: str = "mindmesh-password"
+    MINIO_BUCKET: str = "mindmesh-documents"
+    MINIO_SECURE: bool = False
+    MINIO_DATA_PATH: str = "/minio-data"
 
     # Application settings
     APP_ENV: str = "development"

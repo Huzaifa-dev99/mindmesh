@@ -10,18 +10,24 @@ logger = logging.getLogger(__name__)
 qdrant_client = QdrantClient(url=settings.QDRANT_URL, check_compatibility=False)
 
 
-def ensure_collection() -> None:
+def ensure_collection(collection_name: str | None = None) -> None:
+    target = collection_name or settings.QDRANT_COLLECTION
     collections = qdrant_client.get_collections().collections
-    if any(collection.name == settings.QDRANT_COLLECTION for collection in collections):
+    if any(collection.name == target for collection in collections):
         return
     qdrant_client.create_collection(
-        collection_name=settings.QDRANT_COLLECTION,
+        collection_name=target,
         vectors_config=models.VectorParams(
             size=settings.EMBEDDING_DIMENSION,
             distance=models.Distance.COSINE,
         ),
     )
-    logger.info("qdrant_collection_created collection=%s", settings.QDRANT_COLLECTION)
+    logger.info("qdrant_collection_created collection=%s", target)
+
+
+def ensure_agent_collections() -> None:
+    ensure_collection(settings.QDRANT_NOTES_COLLECTION)
+    ensure_collection(settings.QDRANT_DOCUMENTS_COLLECTION)
 
 
 def check_qdrant_connection() -> bool:

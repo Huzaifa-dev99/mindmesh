@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
-import type { Journal, Note, SearchResult, User } from "../types";
+import type { ConversationSummary, DocumentResource, Journal, Note, SearchResult, User } from "../types";
 
 const TOKEN_KEY = "mindmesh.token";
 const USER_KEY = "mindmesh.user";
@@ -13,6 +13,8 @@ export function useMindMesh() {
   });
   const [journals, setJournals] = useState<Journal[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [documents, setDocuments] = useState<DocumentResource[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([]);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -34,6 +36,8 @@ export function useMindMesh() {
     setUser(null);
     setJournals([]);
     setNotes([]);
+    setDocuments([]);
+    setConversations([]);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
   }, []);
@@ -55,14 +59,18 @@ export function useMindMesh() {
   const refresh = useCallback(async () => {
     if (!token) return;
     await run(async () => {
-      const [nextJournals, nextNotes, nextTags] = await Promise.all([
+      const [nextJournals, nextNotes, nextDocuments, nextTags, nextConversations] = await Promise.all([
         api.journals(token),
         api.notes(token),
-        api.tags(token)
+        api.documents(token),
+        api.tags(token),
+        api.conversations(token)
       ]);
       setJournals(nextJournals);
       setNotes(nextNotes);
+      setDocuments(nextDocuments);
       setTags(nextTags);
+      setConversations(nextConversations);
     });
   }, [run, token]);
 
@@ -76,6 +84,8 @@ export function useMindMesh() {
     authenticated,
     journals,
     notes,
+    documents,
+    conversations,
     tags,
     searchResults,
     loading,
@@ -87,6 +97,8 @@ export function useMindMesh() {
     run,
     setJournals,
     setNotes,
+    setDocuments,
+    setConversations,
     setSearchResults
   };
 }

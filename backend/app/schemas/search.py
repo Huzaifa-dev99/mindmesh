@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    limit: int = Field(10, ge=1, le=50)
-    source_types: list[Literal["journal", "note"]] | None = None
+    limit: int = Field(5, ge=1, le=5)
+    source_types: list[Literal["journal", "note", "document"]] | None = None
     tags: list[str] | None = None
 
 

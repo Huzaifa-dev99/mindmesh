@@ -12,7 +12,8 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     conversation_id: uuid.UUID | None = None
     use_rag: bool = True
-    limit: int = Field(6, ge=1, le=20)
+    limit: int = Field(5, ge=1, le=5)
+    tavily_api_key: str | None = Field(None, max_length=255)
 
 
 class MessageResponse(BaseModel):

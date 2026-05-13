@@ -15,7 +15,7 @@ API Segmentation Plan:
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import chat, health, journals, knowledge, search, users
+from app.api.v1.endpoints import chat, conversations, health, journals, knowledge, search, users
 
 # Create v1 API router with version prefix
 api_v1_router = APIRouter(prefix="/v1")
@@ -31,3 +31,4 @@ api_v1_router.include_router(journals.router, prefix="/journals", tags=["journal
 api_v1_router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])
 api_v1_router.include_router(search.router, prefix="/search", tags=["search"])
 api_v1_router.include_router(chat.router, prefix="/chat", tags=["chat"])
+api_v1_router.include_router(conversations.router, prefix="/conversations", tags=["conversations"])

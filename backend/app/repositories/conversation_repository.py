@@ -1,5 +1,6 @@
 import uuid
 
+from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -30,6 +31,18 @@ class ConversationRepository:
             await self.session.flush()
         return conversation
 
+    async def get_by_id(self, user_id: uuid.UUID, conversation_id: uuid.UUID) -> Conversation | None:
+        result = await self.session.execute(
+            select(Conversation)
+            .options(selectinload(Conversation.messages))
+            .where(
+                Conversation.id == conversation_id,
+                Conversation.user_id == user_id,
+                Conversation.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def add_message(
         self, conversation_id: uuid.UUID, role: str, content: str, metadata: dict | None = None
     ) -> Message:
@@ -47,8 +60,19 @@ class ConversationRepository:
     async def list_for_user(self, user_id: uuid.UUID, limit: int = 30) -> list[Conversation]:
         result = await self.session.execute(
             select(Conversation)
+            .options(selectinload(Conversation.messages))
             .where(Conversation.user_id == user_id, Conversation.deleted_at.is_(None))
             .order_by(Conversation.created_at.desc())
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def update_title(self, conversation: Conversation, title: str) -> Conversation:
+        conversation.title = title.strip()
+        await self.session.flush()
+        await self.session.refresh(conversation)
+        return conversation
+
+    async def soft_delete(self, conversation: Conversation) -> None:
+        conversation.deleted_at = func.now()
+        await self.session.flush()

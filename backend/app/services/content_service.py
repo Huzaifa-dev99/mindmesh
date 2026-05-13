@@ -7,6 +7,7 @@ from app.ai.embeddings.chunking import chunk_text
 from app.ai.embeddings.local import FastEmbedProvider
 from app.ai.prompts.templates import SUMMARY_PROMPT
 from app.ai.providers.groq import GroqChatProvider
+from app.core.config import settings
 from app.models.embedding import EmbeddingMetadata
 from app.models.journal import Journal
 from app.models.note import Note
@@ -67,7 +68,9 @@ class IngestionService:
         tags: list[str],
         metadata: dict,
     ) -> None:
-        await self.vector_service.delete_source(user_id, source_type, source_id)
+        collection_name = settings.QDRANT_DOCUMENTS_COLLECTION if source_type == "document" else settings.QDRANT_NOTES_COLLECTION
+        vector_service = VectorService(collection_name)
+        await vector_service.delete_source(user_id, source_type, source_id)
         chunks = chunk_text(content)
         if not chunks:
             return
@@ -85,7 +88,7 @@ class IngestionService:
             }
             for index, chunk in enumerate(chunks)
         ]
-        point_ids = await self.vector_service.upsert(vectors, payloads)
+        point_ids = await vector_service.upsert(vectors, payloads)
         rows = [
             EmbeddingMetadata(
                 user_id=user_id,
@@ -140,7 +143,7 @@ class JournalService:
         if not journal:
             raise HTTPException(status_code=404, detail="Journal not found")
         await self.journals.soft_delete(journal)
-        await self.ingestion.vector_service.delete_source(user_id, "journal", journal.id)
+        await VectorService(settings.QDRANT_NOTES_COLLECTION).delete_source(user_id, "journal", journal.id)
 
     async def summarize(self, journal_id: uuid.UUID, user_id: uuid.UUID) -> JournalSummary:
         journal = await self.journals.get_by_id(journal_id, user_id)
@@ -185,7 +188,9 @@ class NoteService:
         if not note:
             raise HTTPException(status_code=404, detail="Note not found")
         await self.notes.soft_delete(note)
-        await self.ingestion.vector_service.delete_source(user_id, "note", note.id)
+        source_type = "document" if "document" in [link.tag.name for link in note.tags] else "note"
+        collection = settings.QDRANT_DOCUMENTS_COLLECTION if source_type == "document" else settings.QDRANT_NOTES_COLLECTION
+        await VectorService(collection).delete_source(user_id, source_type, note.id)
 
     async def list_tags(self, user_id: uuid.UUID) -> list[TagResponse]:
         return [TagResponse.model_validate(tag) for tag in await self.tags.list_for_user(user_id)]
