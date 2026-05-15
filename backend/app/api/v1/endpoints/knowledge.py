@@ -55,8 +55,12 @@ async def list_tags(current_user: User = Depends(get_current_user), db: AsyncSes
 
 
 @router.get("/documents")
-async def list_documents(current_user: User = Depends(get_current_user)):
-    return await DocumentService().list_documents(current_user.id)
+async def list_documents(
+    scope: str | None = None,
+    chat_id: uuid.UUID | None = None,
+    current_user: User = Depends(get_current_user),
+):
+    return await DocumentService().list_documents(current_user.id, scope=scope, chat_id=chat_id)
 
 
 @router.post("/documents", status_code=201)
@@ -69,6 +73,10 @@ async def upload_document(
         file_name=payload.file_name,
         content=payload.content,
         file_type=payload.file_type,
+        scope=payload.scope,
+        chat_id=payload.chat_id,
+        selected_model_id=payload.selected_model_id,
+        selected_model_supports_vision=payload.selected_model_supports_vision,
     )
 
 

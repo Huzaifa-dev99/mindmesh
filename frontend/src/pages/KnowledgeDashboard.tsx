@@ -53,7 +53,7 @@ export function KnowledgeDashboard({ journals, notes, documents, conversations, 
     setBusy(true);
     try {
       for (const file of files) {
-        await api.uploadDocument(token, file);
+        await api.uploadDocument(token, file, { scope: "global" });
       }
       await onRefresh();
     } finally {
@@ -159,8 +159,8 @@ export function KnowledgeDashboard({ journals, notes, documents, conversations, 
             <h2 className="font-semibold">Documents</h2>
             <label className="button-ghost cursor-pointer">
               <Upload size={16} />
-              {busy ? "Working..." : "Import Text"}
-              <input className="hidden" type="file" accept=".txt,.md,.markdown,.json,.csv,text/*" multiple onChange={uploadDocument} disabled={busy} />
+              {busy ? "Working..." : "Upload Document"}
+              <input className="hidden" type="file" accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp,.ppt,.pptx,image/*,text/plain,application/pdf" multiple onChange={uploadDocument} disabled={busy} />
             </label>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
@@ -176,7 +176,7 @@ export function KnowledgeDashboard({ journals, notes, documents, conversations, 
                 <p className="mt-1 text-xs text-muted">{document.chunk_count} chunks indexed</p>
               </button>
             ))}
-            {!documents.length && <p className="rounded-xl bg-elevated p-4 text-sm text-muted">Import text or markdown files to make them searchable by MindMesh.</p>}
+            {!documents.length && <p className="rounded-xl bg-elevated p-4 text-sm text-muted">Upload documents to make them searchable by MindMesh.</p>}
           </div>
         </section>
 

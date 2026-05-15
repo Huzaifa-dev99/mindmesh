@@ -77,10 +77,10 @@ class NotesAgent:
 class DocumentsAgent:
     """RAG-only documents agent. It answers only from document chunks stored in Qdrant."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         self.embeddings = FastEmbedProvider()
         self.vector_service = VectorService(settings.QDRANT_DOCUMENTS_COLLECTION)
-        self.llm = GroqChatProvider()
+        self.llm = GroqChatProvider(model=model or "llama-3.1-8b-instant", api_key=api_key)
         self.prompt = PromptTemplate.from_template(
             "You are the MindMesh Documents Agent. Answer only from retrieved document chunks. "
             "If the context is insufficient, say no relevant documents were found. "
@@ -88,18 +88,34 @@ class DocumentsAgent:
             "Document context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
         )
 
-    async def answer(self, user_id: uuid.UUID, query: str, limit: int = 5) -> AgentResult:
+    async def answer(self, user_id: uuid.UUID, query: str, limit: int = 5, conversation_id: uuid.UUID | None = None) -> AgentResult:
         vector = (await self.embeddings.embed([query]))[0]
-        points = await self.vector_service.search(
+        global_points = await self.vector_service.search(
             vector,
             limit,
             models.Filter(
                 must=[
                     models.FieldCondition(key="user_id", match=models.MatchValue(value=str(user_id))),
                     models.FieldCondition(key="source_type", match=models.MatchValue(value="document")),
+                    models.FieldCondition(key="scope", match=models.MatchValue(value="global")),
                 ]
             ),
         )
+        chat_points = []
+        if conversation_id:
+            chat_points = await self.vector_service.search(
+                vector,
+                limit,
+                models.Filter(
+                    must=[
+                        models.FieldCondition(key="user_id", match=models.MatchValue(value=str(user_id))),
+                        models.FieldCondition(key="source_type", match=models.MatchValue(value="document")),
+                        models.FieldCondition(key="scope", match=models.MatchValue(value="chat")),
+                        models.FieldCondition(key="chat_id", match=models.MatchValue(value=str(conversation_id))),
+                    ]
+                ),
+            )
+        points = sorted([*global_points, *chat_points], key=lambda point: point.score, reverse=True)[:limit]
         if not points or points[0].score < LOW_CONFIDENCE_THRESHOLD:
             return AgentResult("documents", "I could not find relevant uploaded documents for that question.", [], {"confidence": 0})
         citations = [point_to_search_result(point, "document") for point in points]
@@ -153,18 +169,28 @@ class WebSearchAgent:
 
 
 class SupervisorAgent:
-    def __init__(self, tavily_api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        tavily_api_key: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
         self.notes_agent = NotesAgent()
-        self.documents_agent = DocumentsAgent()
+        self.provider = provider or "Groq"
+        self.model = model
+        groq_model = model if self.provider == "Groq" else None
+        groq_key = api_key if self.provider == "Groq" else None
+        self.documents_agent = DocumentsAgent(model=groq_model, api_key=groq_key)
         self.web_agent = WebSearchAgent(tavily_api_key)
-        self.llm = GroqChatProvider()
+        self.llm = GroqChatProvider(model=groq_model or "llama-3.1-8b-instant", api_key=groq_key)
 
-    async def answer(self, user_id: uuid.UUID, query: str, limit: int = 5) -> AgentResult:
+    async def answer(self, user_id: uuid.UUID, query: str, limit: int = 5, conversation_id: uuid.UUID | None = None) -> AgentResult:
         route = self.route(query)
         if route == "notes":
             return await self.notes_agent.answer(user_id, query, limit)
         if route == "documents":
-            return await self.documents_agent.answer(user_id, query, limit)
+            return await self.documents_agent.answer(user_id, query, limit, conversation_id)
         if route == "web":
             return await self.web_agent.answer(query)
         return AgentResult("direct", await self.direct_answer(query), [], {})
@@ -182,6 +208,11 @@ class SupervisorAgent:
         return "notes"
 
     async def direct_answer(self, query: str) -> str:
+        if self.provider != "Groq":
+            return (
+                f"{self.provider} is selected with model {self.model or 'default'}, but chat generation is currently wired "
+                "through Groq-compatible responses in this local build. Documents and model metadata are still managed provider-agnostically."
+            )
         if re.search(r"\b(hi|hello|hey)\b", query.lower()):
             return "Hi, I am MindMesh. Ask me about your notes, uploaded documents, or current web information if Tavily is configured."
         return await self.llm.complete(

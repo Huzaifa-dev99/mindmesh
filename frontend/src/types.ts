@@ -50,6 +50,26 @@ export type ConversationSummary = {
   last_message_at?: string | null;
 };
 
+export type AIModel = {
+  id: string;
+  provider: string;
+  name: string;
+  display_name: string;
+  capabilities: string[];
+  supports_text: boolean;
+  supports_vision: boolean;
+  supports_documents: boolean;
+};
+
+export type AIProviderConfig = {
+  provider: string;
+  has_api_key: boolean;
+  is_verified: boolean;
+  verified_at?: string | null;
+  default_model_id?: string | null;
+  models: AIModel[];
+};
+
 export type ConversationDetail = ConversationSummary & {
   messages: Array<ChatMessage & { id: string }>;
 };
@@ -61,6 +81,10 @@ export type DocumentResource = {
   uploaded_date?: string | null;
   minio_object_path: string;
   chunk_count: number;
+  scope: "chat" | "global";
+  chat_id?: string | null;
+  status: "uploading" | "processing" | "indexing" | "ready" | "failed";
+  requires_multimodal: boolean;
 };
 
 export type PreviewTarget =

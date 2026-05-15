@@ -14,6 +14,8 @@ class ChatRequest(BaseModel):
     use_rag: bool = True
     limit: int = Field(5, ge=1, le=5)
     tavily_api_key: str | None = Field(None, max_length=255)
+    provider: str | None = None
+    model_id: str | None = None
 
 
 class MessageResponse(BaseModel):

@@ -2,6 +2,7 @@ import {
   Brain,
   ChevronLeft,
   ChevronRight,
+  FileUp,
   Library,
   LockKeyhole,
   Menu,
@@ -73,6 +74,10 @@ export function AppShell({
   const [noteTitle, setNoteTitle] = useState("");
   const [noteContent, setNoteContent] = useState("");
   const [noteTags, setNoteTags] = useState("");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadScope, setUploadScope] = useState<"chat" | "global">("chat");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState("");
 
   useEffect(() => {
     localStorage.setItem("mindmesh.sidebar", sidebarOpen ? "expanded" : "collapsed");
@@ -185,6 +190,32 @@ export function AppShell({
     setEditingNoteId(null);
     setEditingNote(false);
     await onRefresh();
+  }
+
+  async function uploadDocument(event: FormEvent) {
+    event.preventDefault();
+    if (!uploadFile) return;
+    if (uploadScope === "chat" && !selectedConversationId) {
+      setUploadStatus("Start or select a chat before adding a chat-scoped document.");
+      return;
+    }
+    setUploadStatus("Uploading and indexing...");
+    try {
+      const aiConfig = await api.aiConfig(token).catch(() => null);
+      const selectedModelId = localStorage.getItem("mindmesh.currentModel") || localStorage.getItem("mindmesh.defaultModel") || aiConfig?.default_model_id || aiConfig?.models[0]?.id;
+      const selectedModel = aiConfig?.models.find((model) => model.id === selectedModelId);
+      await api.uploadDocument(token, uploadFile, {
+        scope: uploadScope,
+        chatId: selectedConversationId,
+        selectedModelId,
+        selectedModelSupportsVision: Boolean(selectedModel?.supports_vision)
+      });
+      setUploadStatus("Document indexed and ready to query.");
+      setUploadFile(null);
+      await onRefresh();
+    } catch (error) {
+      setUploadStatus(error instanceof Error ? error.message : "Upload failed.");
+    }
   }
 
   function selectTagSuggestion(tag: string) {
@@ -372,7 +403,8 @@ export function AppShell({
           </button>
         </div>
 
-        <div className="h-[calc(100vh-3.5rem)] overflow-y-auto p-4">
+        <div className="flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {editingNote ? (
             <form onSubmit={createNote} className="space-y-3">
               <input className="control" placeholder="Note title" value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} />
@@ -428,6 +460,8 @@ export function AppShell({
               <Metadata label="Type" value={previewDocument.file_type || "Document"} />
               <Metadata label="Uploaded" value={previewDocument.uploaded_date ? formatDate(previewDocument.uploaded_date) : "Unknown"} />
               <Metadata label="Chunks" value={`${previewDocument.chunk_count}`} />
+              <Metadata label="Scope" value={previewDocument.scope === "chat" ? "Current chat only" : "Global knowledge library"} />
+              <Metadata label="Status" value={previewDocument.requires_multimodal ? "Ready, but image understanding needs a multimodal model" : previewDocument.status} />
               <Metadata label="MinIO path" value={previewDocument.minio_object_path} />
             </PreviewShell>
           ) : (
@@ -466,10 +500,63 @@ export function AppShell({
               </section>
             </div>
           )}
+          </div>
+          <div className="border-t border-border p-4">
+            <button className="button-primary w-full" onClick={() => {
+              setUploadOpen(true);
+              setUploadScope(selectedConversationId ? "chat" : "global");
+              setUploadStatus("");
+            }}>
+              <FileUp size={16} />
+              Upload Document
+            </button>
+          </div>
         </div>
       </aside>
 
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} theme={theme} onThemeChange={onThemeChange} />
+      {uploadOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <form onSubmit={uploadDocument} className="modal-panel w-full max-w-md p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold">Upload Document</h2>
+                <p className="text-sm text-muted">Index a file for this chat or the global library.</p>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setUploadOpen(false)} aria-label="Close upload dialog">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <input
+                className="control"
+                type="file"
+                accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp,.ppt,.pptx,image/*,text/plain,application/pdf"
+                onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
+              />
+              <div>
+                <p className="field-label">Document Scope</p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <button type="button" className={`button-ghost ${uploadScope === "chat" ? "ring-2 ring-foreground/20" : ""}`} onClick={() => setUploadScope("chat")}>
+                    Current chat
+                  </button>
+                  <button type="button" className={`button-ghost ${uploadScope === "global" ? "ring-2 ring-foreground/20" : ""}`} onClick={() => setUploadScope("global")}>
+                    Global library
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs leading-5 text-muted">
+                Chat documents stay private to this chat. Global documents are available across all chats after indexing.
+              </p>
+              {uploadStatus && <p className="rounded-xl bg-panel p-3 text-sm text-muted">{uploadStatus}</p>}
+              <button className="button-primary w-full" disabled={!uploadFile}>
+                Upload & Index
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <SettingsDialog open={settingsOpen} token={token} onClose={() => setSettingsOpen(false)} theme={theme} onThemeChange={onThemeChange} />
     </div>
   );
 }

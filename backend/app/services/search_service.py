@@ -26,6 +26,10 @@ class SearchService:
             if request.source_types:
                 source_types = [item for item in request.source_types if item != "document"] if collection == settings.QDRANT_NOTES_COLLECTION else ["document"]
                 must.append(models.FieldCondition(key="source_type", match=models.MatchAny(any=source_types)))
+            elif collection == settings.QDRANT_DOCUMENTS_COLLECTION:
+                must.append(models.FieldCondition(key="scope", match=models.MatchValue(value="global")))
+            if request.source_types and collection == settings.QDRANT_DOCUMENTS_COLLECTION:
+                must.append(models.FieldCondition(key="scope", match=models.MatchValue(value="global")))
             if request.tags and collection == settings.QDRANT_NOTES_COLLECTION:
                 must.append(models.FieldCondition(key="tags", match=models.MatchAny(any=request.tags)))
             points.extend(await VectorService(collection).search(vector, request.limit, models.Filter(must=must)))

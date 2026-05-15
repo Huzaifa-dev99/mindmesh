@@ -109,8 +109,15 @@ class JournalService:
     def __init__(self, session: AsyncSession):
         self.journals = JournalRepository(session)
         self.tags = TagRepository(session)
-        self.ingestion = IngestionService(session)
+        self._session = session
+        self._ingestion: IngestionService | None = None
         self.ai = GroqChatProvider()
+
+    @property
+    def ingestion(self) -> IngestionService:
+        if self._ingestion is None:
+            self._ingestion = IngestionService(self._session)
+        return self._ingestion
 
     async def list_journals(self, user_id: uuid.UUID) -> list[JournalResponse]:
         return [journal_to_response(item) for item in await self.journals.list_for_user(user_id)]
@@ -159,7 +166,14 @@ class NoteService:
     def __init__(self, session: AsyncSession):
         self.notes = NoteRepository(session)
         self.tags = TagRepository(session)
-        self.ingestion = IngestionService(session)
+        self._session = session
+        self._ingestion: IngestionService | None = None
+
+    @property
+    def ingestion(self) -> IngestionService:
+        if self._ingestion is None:
+            self._ingestion = IngestionService(self._session)
+        return self._ingestion
 
     async def list_notes(self, user_id: uuid.UUID) -> list[NoteResponse]:
         return [note_to_response(item) for item in await self.notes.list_for_user(user_id)]

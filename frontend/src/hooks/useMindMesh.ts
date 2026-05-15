@@ -9,7 +9,14 @@ export function useMindMesh() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [user, setUser] = useState<User | null>(() => {
     const raw = localStorage.getItem(USER_KEY);
-    return raw ? (JSON.parse(raw) as User) : null;
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as User;
+    } catch {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      return null;
+    }
   });
   const [journals, setJournals] = useState<Journal[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);

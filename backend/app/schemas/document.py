@@ -11,9 +11,17 @@ class DocumentResponse(BaseModel):
     uploaded_date: datetime | str | None = None
     minio_object_path: str
     chunk_count: int = 0
+    scope: str = "global"
+    chat_id: UUID | str | None = None
+    status: str = "ready"
+    requires_multimodal: bool = False
 
 
 class DocumentUpload(BaseModel):
     file_name: str
     content: str
     file_type: str = "text/plain"
+    scope: str = "global"
+    chat_id: UUID | None = None
+    selected_model_id: str | None = None
+    selected_model_supports_vision: bool = False

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Bot, SendHorizontal, UserRound } from "lucide-react";
 import { api } from "../lib/api";
-import type { ChatMessage, PreviewTarget, SearchResult } from "../types";
+import type { AIModel, ChatMessage, PreviewTarget, SearchResult } from "../types";
 
 type Props = {
   token: string;
@@ -21,7 +21,33 @@ export function ProductivityWorkspace({ token, conversationId, onConversationCha
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [busy, setBusy] = useState(false);
   const [loadingConversation, setLoadingConversation] = useState(false);
+  const [models, setModels] = useState<AIModel[]>([]);
+  const [provider, setProvider] = useState(localStorage.getItem("mindmesh.provider") || "Groq");
+  const [selectedModelId, setSelectedModelId] = useState(localStorage.getItem("mindmesh.currentModel") || localStorage.getItem("mindmesh.defaultModel") || "");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const selectedModel = models.find((model) => model.id === selectedModelId);
+
+  useEffect(() => {
+    api.aiConfig(token).then((config) => {
+      if (!config) return api.aiModels(token, provider).then(setModels);
+      setProvider(config.provider);
+      setModels(config.models);
+      const nextModel = selectedModelId || config.default_model_id || config.models[0]?.id || "";
+      setSelectedModelId(nextModel);
+      if (nextModel) localStorage.setItem("mindmesh.currentModel", nextModel);
+    }).catch(() => undefined);
+  }, [provider, selectedModelId, token]);
+
+  useEffect(() => {
+    if (!conversationId) return;
+    api.getChatModel(token, conversationId).then((selection) => {
+      if (selection.provider) setProvider(selection.provider);
+      if (selection.model_id) {
+        setSelectedModelId(selection.model_id);
+        localStorage.setItem("mindmesh.currentModel", selection.model_id);
+      }
+    }).catch(() => undefined);
+  }, [conversationId, token]);
 
   useEffect(() => {
     if (!conversationId) {
@@ -62,12 +88,23 @@ export function ProductivityWorkspace({ token, conversationId, onConversationCha
     setMessages((current) => [...current, { role: "user", content: prompt }]);
     setBusy(true);
     try {
-      const response = await api.chat(token, prompt, conversationId, localStorage.getItem("mindmesh.tavilyApiKey"));
+      const response = await api.chat(token, prompt, conversationId, localStorage.getItem("mindmesh.tavilyApiKey"), { provider, modelId: selectedModelId });
       onConversationChange(response.conversation_id);
+      if (selectedModelId) {
+        await api.setChatModel(token, response.conversation_id, { provider, model_id: selectedModelId }).catch(() => undefined);
+      }
       setMessages((current) => [...current, { role: "assistant", content: response.answer, citations: response.citations.slice(0, 5) }]);
       await onRefresh();
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function changeModel(modelId: string) {
+    setSelectedModelId(modelId);
+    localStorage.setItem("mindmesh.currentModel", modelId);
+    if (conversationId) {
+      await api.setChatModel(token, conversationId, { provider, model_id: modelId }).catch(() => undefined);
     }
   }
 
@@ -78,6 +115,15 @@ export function ProductivityWorkspace({ token, conversationId, onConversationCha
           <div className="mb-6">
             <h1 className="text-2xl font-semibold tracking-tight">Personal Knowledge Chat</h1>
             <p className="mt-1 text-sm text-muted">Clear, focused conversations grounded in your local memory.</p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <select className="control max-w-xs" value={selectedModelId} onChange={(event) => void changeModel(event.target.value)} aria-label="Select chat model">
+                {models.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}
+              </select>
+              {selectedModel?.capabilities.map((capability) => <span key={capability} className="badge">{capability}</span>)}
+            </div>
+            {selectedModel && !selectedModel.supports_vision && (
+              <p className="mt-2 text-xs text-muted">This model does not support multimodal input. Image documents require a Vision or Multimodal model.</p>
+            )}
           </div>
 
           <div className="space-y-5">
