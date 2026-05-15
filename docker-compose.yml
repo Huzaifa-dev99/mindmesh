@@ -39,7 +39,7 @@ services:
     build: ./backend
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "127.0.0.1:8000:8000"
     environment:
@@ -67,8 +67,13 @@ services:
       minio:
         condition: service_started
     volumes:
-      - ./backend:/app
       - minio_data:/minio-data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
 
   frontend:
     build: ./frontend
@@ -81,10 +86,14 @@ services:
       VITE_SINGLE_USER_EMAIL: ${SINGLE_USER_EMAIL:-local@mindmesh.app}
       VITE_SINGLE_USER_PASSWORD: ${SINGLE_USER_PASSWORD:-mindmesh-local-workspace-password}
     depends_on:
-      - backend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8501/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
 volumes:
   postgres_data:

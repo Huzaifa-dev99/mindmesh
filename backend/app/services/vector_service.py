@@ -18,6 +18,13 @@ class VectorService:
         payloads: list[dict[str, Any]],
         point_ids: list[str] | None = None,
     ) -> list[str]:
+        if len(vectors) != len(payloads):
+            raise ValueError("Vector and payload counts must match")
+        if point_ids is not None and len(point_ids) != len(vectors):
+            raise ValueError("Point id count must match vector count")
+        if not vectors:
+            return []
+
         ids = point_ids or [str(uuid.uuid4()) for _ in vectors]
         points = [
             models.PointStruct(id=point_id, vector=vector, payload=payload)

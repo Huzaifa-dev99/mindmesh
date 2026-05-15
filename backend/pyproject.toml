@@ -29,12 +29,10 @@ dependencies = [
     "python-jose[cryptography]",
     "passlib",
     "python-dotenv",
-    "pytest",
-    "pytest-asyncio",
 ]
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy"]
+dev = ["pytest", "pytest-asyncio", "ruff", "mypy"]
 
 [tool.setuptools.packages.find]
 where = ["."]
