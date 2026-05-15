@@ -1,95 +1,136 @@
 # MindMesh
 
-MindMesh is a self-hosted AI journaling and knowledge management platform. It combines journals, notes, tags, semantic search, and RAG chat over a private personal memory store.
+MindMesh is a self-hosted personal knowledge workspace. It combines notes, journals, document upload, semantic search, and AI chat over a private memory store.
 
-## What Is Included
+## Tech Stack
 
-- FastAPI backend with versioned routes, OpenAPI docs, CORS, request logging, exception handling, and health checks
-- PostgreSQL data model with UUID primary keys, timestamps, soft deletion, tags, conversations, messages, and embedding metadata
-- Alembic migration setup with an initial schema
-- Qdrant vector store integration with collection initialization, upsert, search, and source deletion
-- Local open-source embeddings through FastEmbed, with a provider abstraction for future model swaps
-- Groq chat integration for chat, summaries, and RAG answer generation
-- React + Tailwind frontend with Dashboard, Journal, Notes, AI Chat, Search, and Settings views
-- JWT authentication foundation with password hashing and protected routes
-- Docker Compose stack for backend, frontend, Postgres, and Qdrant
-- Pytest foundation with API and service-adjacent examples
+- Frontend: React 18, Vite, TypeScript, Tailwind CSS, lucide-react
+- Backend: FastAPI, Pydantic, SQLAlchemy async ORM, Alembic
+- Data stores: PostgreSQL for relational data, Qdrant for vectors, local MinIO-compatible storage path for uploaded files
+- AI: FastEmbed for local embeddings, Groq for current chat generation, provider/model management for Groq, OpenAI, Gemini, and Claude
+- Tooling: Docker Compose, Pytest
+
+## Core Features
+
+- JWT-authenticated users
+- Notes and journals with tags
+- Semantic search across notes, journals, and global documents
+- Chat with RAG routing over notes, documents, or web search
+- AI Settings tab for provider API key verification and model discovery
+- Per-chat model selection
+- Document uploads from Library and right panel
+- Document scopes:
+  - `global`: available across all chats
+  - `chat`: available only to the selected chat
+- Document indexing status in the UI: `Uploaded`, `Indexed`, `Failed`
 
 ## Architecture
 
-The backend keeps the existing layered structure:
+```text
+frontend/
+  src/
+    App.tsx                  Authenticated page composition
+    lib/api.ts               Typed API client
+    hooks/useMindMesh.ts     Session and data orchestration
+    components/              Shell, settings, lock screen, shared UI
+    pages/                   Chat and Library views
 
-- `app/api`: FastAPI routing and dependencies
-- `app/schemas`: Pydantic request and response DTOs
-- `app/models`: SQLAlchemy ORM entities
-- `app/repositories`: database access
-- `app/services`: business workflows, ingestion, search, chat
-- `app/ai`: provider abstractions, prompts, embeddings, chunking
-- `app/db`: database and Qdrant clients
-- `alembic`: migrations
+backend/
+  app/
+    api/                     FastAPI routers and dependencies
+    core/                    Config, security, logging, middleware
+    db/                      PostgreSQL session and Qdrant client
+    models/                  SQLAlchemy ORM models
+    repositories/            Relational persistence helpers
+    schemas/                 Pydantic DTOs
+    services/                Business workflows
+    ai/                      Embeddings, prompts, provider wrappers
+  alembic/                   Database migrations
+  tests/                     Pytest suite
+```
 
-The frontend is a lightweight Vite React application:
+## Data Flow
 
-- `src/App.tsx`: authenticated app routing
-- `src/components`: app shell, auth, and shared UI blocks
-- `src/pages`: dashboard, journal, notes, chat, search, and settings views
-- `src/lib/api.ts`: typed backend API wrapper
-- `src/hooks`: session and data orchestration
+### Notes and Journals
 
-## Quick Start
+1. User creates or updates content.
+2. PostgreSQL stores the source record and tags.
+3. Content is chunked.
+4. FastEmbed creates vectors.
+5. Qdrant stores vectors and retrieval payloads.
 
-1. Copy environment defaults:
+### Documents
 
-   ```bash
-   cp .env.example .env
-   ```
+1. User uploads a file from the Library Documents tab or right panel.
+2. Frontend sends multipart form data to `/v1/knowledge/documents`.
+3. Backend stores original bytes under `MINIO_DATA_PATH`.
+4. Backend extracts text from supported formats:
+   - TXT/MD/CSV/JSON
+   - PDF via `pypdf`
+   - DOCX via `python-docx`
+   - PPTX via `python-pptx`
+   - images receive metadata placeholders for multimodal processing
+5. Extracted text is chunked and embedded.
+6. Qdrant stores chunks with scope metadata.
+7. Chat retrieval searches global documents plus current-chat documents only.
 
-2. Add `GROQ_API_KEY` in `.env` if you want AI responses. Without it, storage and search still work.
+### Chat
 
-3. Start the full local stack:
+1. User sends a message with selected provider/model metadata.
+2. Backend creates or loads the conversation.
+3. `SupervisorAgent` routes the query to notes, documents, web, or direct response.
+4. RAG agents retrieve relevant chunks from Qdrant.
+5. Groq generates the answer.
+6. Assistant message and citation metadata are saved.
 
-   ```bash
-   docker compose up --build
-   ```
+## Configuration
 
-4. Open:
-
-   - Frontend: http://localhost:8501
-   - Backend: http://localhost:8000
-   - API docs: http://localhost:8000/docs
-   - Qdrant dashboard/API: http://localhost:6335
-   - PostgreSQL host port: `5433` by default, mapped to container port `5432`
-
-The backend runs `alembic upgrade head` before starting.
-
-## Environment
+Copy `.env.example` to `.env` and change production secrets.
 
 Important variables:
 
-- `DATABASE_URL`: PostgreSQL connection string
-- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`: database container setup
-- `QDRANT_URL`: Qdrant endpoint
-- `QDRANT_COLLECTION`: vector collection name
-- `EMBEDDING_MODEL`: FastEmbed model name
-- `EMBEDDING_DIMENSION`: vector size, default `384`
-- `GROQ_API_KEY`: Groq API key
-- `SECRET_KEY`: JWT signing secret
-- `CORS_ORIGINS`: comma-separated frontend origins
-- `WORKSPACE_PIN`: local single-user frontend passcode, default `0000`
-- `SINGLE_USER_EMAIL`, `SINGLE_USER_PASSWORD`: internal local backend account used after unlock
+- `DATABASE_URL`
+- `SECRET_KEY`
+- `GROQ_API_KEY`
+- `TAVILY_API_KEY`
+- `QDRANT_URL`
+- `QDRANT_NOTES_COLLECTION`
+- `QDRANT_DOCUMENTS_COLLECTION`
+- `MINIO_DATA_PATH`
+- `CORS_ORIGINS`
 
-## Development
+Use a strong, stable `SECRET_KEY`; it signs JWTs and encrypts saved AI API keys.
 
-Backend:
+## Run Locally With Docker
 
 ```bash
+docker compose up --build
+```
+
+Open:
+
+- Frontend: http://localhost:8501
+- Backend: http://localhost:8000
+- API docs: http://localhost:8000/docs
+- Qdrant: http://localhost:6335
+- MinIO console: http://localhost:9001
+
+The backend runs Alembic migrations before starting.
+
+## Backend Development
+
+```powershell
 cd backend
+..\.venv\Scripts\Activate.ps1
 pip install -e .
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Frontend:
+When running the backend on the host against Docker Compose services, use `QDRANT_URL=http://localhost:6335`.
+The Docker backend container already uses `QDRANT_URL=http://qdrant:6333`.
+
+## Frontend Development
 
 ```bash
 cd frontend
@@ -97,17 +138,28 @@ npm install
 npm run dev -- --host 0.0.0.0 --port 8501
 ```
 
-Tests:
+## Tests
 
 ```bash
 cd backend
 pytest
 ```
 
-## Current Roadmap
+If tests fail with a FastAPI/Starlette constructor error, reinstall backend dependencies in a clean virtual environment. The project pins Starlette to the FastAPI-compatible range in `backend/pyproject.toml`.
 
-- Add refresh tokens and user password reset flow
-- Add richer timeline filters and bulk re-indexing endpoints
-- Add streaming chat responses
-- Add export/import for journals and notes
-- Add optional local LLM provider behind the existing AI abstraction
+## Production Notes
+
+- Set `DEBUG=false`.
+- Use a strong `SECRET_KEY`.
+- Restrict `CORS_ORIGINS`.
+- Run behind HTTPS.
+- Use persistent volumes for PostgreSQL, Qdrant, and document storage.
+- Prefer managed secrets for production API keys when available.
+- Add background workers before indexing very large documents or high upload volume.
+
+## Known Follow-Ups
+
+- Streaming chat responses.
+- Full non-Groq generation adapters.
+- OCR for scanned PDFs and image-only documents.
+- Background document indexing queue for high-volume deployments.

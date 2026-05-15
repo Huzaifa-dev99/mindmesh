@@ -1,9 +1,10 @@
-import { Bot, KeyRound, LockKeyhole, MessageSquareText, Moon, Save, Sun, X } from "lucide-react";
+import { Bot, KeyRound, LockKeyhole, MessageSquareText, Moon, Palette, Save, Sun, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import type { AccentTheme, DensityMode } from "../App";
 import type { AIModel, AIProviderConfig } from "../types";
 
-type SettingsTab = "ai" | "tools" | "prompts" | "security";
+type SettingsTab = "ai" | "personalization" | "tools" | "prompts" | "security";
 
 type Props = {
   open: boolean;
@@ -11,16 +12,40 @@ type Props = {
   onClose: () => void;
   theme: "dark" | "light";
   onThemeChange: (theme: "dark" | "light") => void;
+  accentTheme: AccentTheme;
+  onAccentThemeChange: (theme: AccentTheme) => void;
+  density: DensityMode;
+  onDensityChange: (density: DensityMode) => void;
 };
 
 const tabs: Array<{ key: SettingsTab; label: string; icon: typeof KeyRound }> = [
   { key: "ai", label: "AI Settings", icon: Bot },
+  { key: "personalization", label: "Personalization", icon: Palette },
   { key: "tools", label: "Tools", icon: KeyRound },
   { key: "prompts", label: "Prompts", icon: MessageSquareText },
   { key: "security", label: "Security", icon: LockKeyhole }
 ];
 
-export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: Props) {
+const accentThemes: Array<{ key: AccentTheme; label: string }> = [
+  { key: "graphite", label: "Graphite" },
+  { key: "ocean", label: "Ocean" },
+  { key: "emerald", label: "Emerald" },
+  { key: "violet", label: "Violet" },
+  { key: "amber", label: "Amber" },
+  { key: "rose", label: "Rose" }
+];
+
+export function SettingsDialog({
+  open,
+  token,
+  onClose,
+  theme,
+  onThemeChange,
+  accentTheme,
+  onAccentThemeChange,
+  density,
+  onDensityChange
+}: Props) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("ai");
   const [provider, setProvider] = useState(localStorage.getItem("mindmesh.provider") || "Groq");
   const [apiKey, setApiKey] = useState("");
@@ -57,6 +82,24 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
       cancelled = true;
     };
   }, [open, token]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.aiModels(token, provider)
+      .then((items) => {
+        if (!cancelled) {
+          setModels(items);
+          if (!items.some((model) => model.id === defaultModelId)) {
+            setDefaultModelId(items[0]?.id || "");
+          }
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, provider, token]);
 
   if (!open) return null;
 
@@ -96,11 +139,11 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <section className="modal-panel w-full max-w-3xl">
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
-            <h2 className="text-lg font-semibold">Profile Settings</h2>
+            <h2 id="settings-title" className="text-lg font-semibold">Profile Settings</h2>
             <p className="text-sm text-muted">Manage providers, prompts, and local privacy.</p>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close settings">
@@ -109,11 +152,18 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
         </header>
 
         <div className="grid min-h-[28rem] md:grid-cols-[12rem_1fr]">
-          <nav className="border-b border-border p-3 md:border-b-0 md:border-r">
+          <nav className="border-b border-border p-3 md:border-b-0 md:border-r" role="tablist" aria-label="Settings sections">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
-                <button key={tab.key} onClick={() => setActiveTab(tab.key)} className={`sidebar-item ${activeTab === tab.key ? "sidebar-item-active" : ""}`}>
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`sidebar-item ${activeTab === tab.key ? "sidebar-item-active" : ""}`}
+                >
                   <Icon size={16} />
                   {tab.label}
                 </button>
@@ -123,7 +173,7 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
 
           <div className="max-h-[65vh] overflow-y-auto p-5">
             {activeTab === "ai" && (
-              <div className="space-y-4">
+              <div className="space-y-4" role="tabpanel" aria-label="AI Settings">
                 <div>
                   <label className="field-label">AI Provider</label>
                   <select className="control mt-2" value={provider} onChange={(event) => setProvider(event.target.value)}>
@@ -138,7 +188,7 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
                     <Save size={16} />
                     Verify & Load Models
                   </button>
-                  {aiStatus && <p className="mt-2 text-xs text-muted">{aiStatus}</p>}
+                  {aiStatus && <p className="mt-2 rounded-xl border border-border bg-panel px-3 py-2 text-xs text-muted">{aiStatus}</p>}
                 </div>
                 <div>
                   <label className="field-label">Default Model</label>
@@ -163,8 +213,58 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
               </div>
             )}
 
+            {activeTab === "personalization" && (
+              <div className="space-y-5" role="tabpanel" aria-label="Personalization">
+                <section>
+                  <p className="font-medium">Appearance</p>
+                  <p className="mt-1 text-sm text-muted">Keep the workspace calm, focused, and comfortable for long sessions.</p>
+                  <div className="mt-3 inline-flex rounded-xl bg-panel p-1">
+                    <button type="button" onClick={() => onThemeChange("dark")} className={`context-segment ${theme === "dark" ? "context-segment-active" : ""}`}>
+                      <Moon size={14} />
+                      Dark
+                    </button>
+                    <button type="button" onClick={() => onThemeChange("light")} className={`context-segment ${theme === "light" ? "context-segment-active" : ""}`}>
+                      <Sun size={14} />
+                      Light
+                    </button>
+                  </div>
+                </section>
+
+                <section>
+                  <p className="font-medium">Accent</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {accentThemes.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`theme-swatch ${accentTheme === item.key ? "theme-swatch-active" : ""}`}
+                        data-accent-preview={item.key}
+                        onClick={() => onAccentThemeChange(item.key)}
+                        aria-pressed={accentTheme === item.key}
+                      >
+                        <span className="theme-swatch-dot" />
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <p className="font-medium">Density</p>
+                  <div className="mt-3 inline-flex rounded-xl bg-panel p-1">
+                    <button type="button" onClick={() => onDensityChange("comfortable")} className={`context-segment ${density === "comfortable" ? "context-segment-active" : ""}`}>
+                      Comfortable
+                    </button>
+                    <button type="button" onClick={() => onDensityChange("compact")} className={`context-segment ${density === "compact" ? "context-segment-active" : ""}`}>
+                      Compact
+                    </button>
+                  </div>
+                </section>
+              </div>
+            )}
+
             {activeTab === "tools" && (
-              <div className="space-y-4">
+              <div className="space-y-4" role="tabpanel" aria-label="Tools">
                 <div>
                   <label className="field-label">Tavily API Key</label>
                   <input className="control mt-2" value={tavilyApiKey} onChange={(event) => setTavilyApiKey(event.target.value)} type="password" placeholder="tvly-..." />
@@ -174,7 +274,7 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
             )}
 
             {activeTab === "prompts" && (
-              <div className="space-y-4">
+              <div className="space-y-4" role="tabpanel" aria-label="Prompts">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="field-label">User name</label>
@@ -193,22 +293,8 @@ export function SettingsDialog({ open, token, onClose, theme, onThemeChange }: P
             )}
 
             {activeTab === "security" && (
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-border bg-panel p-4">
-                  <p className="font-medium">Theme</p>
-                  <p className="mt-1 text-sm text-muted">Theme is applied globally and remembered between sessions.</p>
-                  <div className="mt-3 flex gap-2">
-                    <button onClick={() => onThemeChange("dark")} className={`button-ghost ${theme === "dark" ? "ring-2 ring-foreground/20" : ""}`}>
-                      <Moon size={16} />
-                      Dark
-                    </button>
-                    <button onClick={() => onThemeChange("light")} className={`button-ghost ${theme === "light" ? "ring-2 ring-foreground/20" : ""}`}>
-                      <Sun size={16} />
-                      Light
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-border bg-panel p-4">
+              <div className="space-y-4" role="tabpanel" aria-label="Security">
+                <div className="rounded-2xl bg-panel p-4">
                   <p className="font-medium">Local lock</p>
                   <p className="mt-1 text-sm text-muted">Inactivity lock is enabled and uses your local workspace PIN.</p>
                   <button className="button-ghost mt-3" onClick={() => {

@@ -47,6 +47,8 @@ def note_to_response(note: Note) -> NoteResponse:
         source=note.source,
         tags=[link.tag.name for link in note.tags],
         metadata=note.metadata_,
+        scope=note.scope,
+        chat_id=note.chat_id,
         created_at=note.created_at,
         updated_at=note.updated_at,
     )
@@ -182,19 +184,38 @@ class NoteService:
         tags = await self.tags.get_or_create_many(user_id, data.tags)
         note = await self.notes.create(user_id, data, tags)
         response = note_to_response(note)
-        await self.ingestion.reindex(user_id, "note", note.id, note.title, note.content, response.tags, note.metadata_)
+        await self.ingestion.reindex(user_id, "note", note.id, note.title, note.content, response.tags, note_vector_metadata(note))
         return response
 
     async def update_note(self, note_id: uuid.UUID, user_id: uuid.UUID, data: NoteUpdate) -> NoteResponse:
         note = await self.notes.get_by_id(note_id, user_id)
         if not note:
             raise HTTPException(status_code=404, detail="Note not found")
+        if data.scope is not None:
+            data.scope = "chat" if data.scope == "chat" else "global"
+            if data.scope == "chat" and data.chat_id is None:
+                raise HTTPException(status_code=400, detail="Chat-specific notes require a chat id")
+            if data.scope == "global":
+                data.chat_id = None
         tags = await self.tags.get_or_create_many(user_id, data.tags) if data.tags is not None else None
         updated = await self.notes.update(note, data, tags)
         response = note_to_response(updated)
-        await self.ingestion.reindex(
-            user_id, "note", updated.id, updated.title, updated.content, response.tags, updated.metadata_
-        )
+        await self.ingestion.reindex(user_id, "note", updated.id, updated.title, updated.content, response.tags, note_vector_metadata(updated))
+        return response
+
+    async def update_scope(self, note_id: uuid.UUID, user_id: uuid.UUID, scope: str, chat_id: uuid.UUID | None) -> NoteResponse:
+        note = await self.notes.get_by_id(note_id, user_id)
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+        normalized_scope = "chat" if scope == "chat" else "global"
+        if normalized_scope == "chat" and chat_id is None:
+            raise HTTPException(status_code=400, detail="Chat-specific notes require a chat id")
+        note.scope = normalized_scope
+        note.chat_id = chat_id if normalized_scope == "chat" else None
+        await self._session.flush()
+        updated = await self.notes.get_by_id(note_id, user_id) or note
+        response = note_to_response(updated)
+        await self.ingestion.reindex(user_id, "note", updated.id, updated.title, updated.content, response.tags, note_vector_metadata(updated))
         return response
 
     async def delete_note(self, note_id: uuid.UUID, user_id: uuid.UUID) -> None:
@@ -208,3 +229,11 @@ class NoteService:
 
     async def list_tags(self, user_id: uuid.UUID) -> list[TagResponse]:
         return [TagResponse.model_validate(tag) for tag in await self.tags.list_for_user(user_id)]
+
+
+def note_vector_metadata(note: Note) -> dict:
+    return {
+        **note.metadata_,
+        "scope": note.scope,
+        "chat_id": str(note.chat_id) if note.chat_id else None,
+    }

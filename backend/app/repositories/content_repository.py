@@ -123,6 +123,8 @@ class NoteRepository:
             title=data.title,
             content=data.content,
             source=data.source,
+            scope="chat" if data.scope == "chat" else "global",
+            chat_id=data.chat_id if data.scope == "chat" else None,
             metadata_=data.metadata,
         )
         self.session.add(note)

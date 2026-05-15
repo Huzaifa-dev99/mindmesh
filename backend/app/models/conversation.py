@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,6 +11,7 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     __table_args__ = (Index("ix_conversations_user_created", "user_id", "created_at"),)
 
     title: Mapped[str | None] = mapped_column(String(255))
+    archived_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     user_id: Mapped[object] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
 
     user = relationship("User", back_populates="conversations")

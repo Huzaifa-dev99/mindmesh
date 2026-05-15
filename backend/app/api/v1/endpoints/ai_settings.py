@@ -1,8 +1,10 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.db.session import get_db
 from app.models.user import User
 from app.schemas.ai_settings import (
     AIModelResponse,
@@ -22,8 +24,8 @@ async def providers():
 
 
 @router.get("/config", response_model=AIProviderConfigResponse | None)
-async def get_config(current_user: User = Depends(get_current_user)):
-    config = AISettingsService().get_config(current_user.id)
+async def get_config(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    config = await AISettingsService(db).public_config(current_user.id)
     if config is None:
         return None
     return AIProviderConfigResponse(
@@ -37,9 +39,13 @@ async def get_config(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/config", response_model=AIProviderConfigResponse)
-async def save_config(payload: AIProviderConfigRequest, current_user: User = Depends(get_current_user)):
+async def save_config(
+    payload: AIProviderConfigRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     try:
-        config = await AISettingsService().save_config(
+        config = await AISettingsService(db).save_config(
             current_user.id,
             payload.provider,
             payload.api_key,
@@ -58,13 +64,21 @@ async def save_config(payload: AIProviderConfigRequest, current_user: User = Dep
 
 
 @router.get("/models", response_model=list[AIModelResponse])
-async def models(provider: str | None = None, current_user: User = Depends(get_current_user)):
-    return await AISettingsService().list_models(current_user.id, provider)
+async def models(
+    provider: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await AISettingsService(db).list_models(current_user.id, provider)
 
 
 @router.get("/chats/{conversation_id}/model", response_model=ChatModelResponse)
-async def get_chat_model(conversation_id: uuid.UUID, current_user: User = Depends(get_current_user)):
-    provider, model_id = AISettingsService().get_chat_model(current_user.id, conversation_id)
+async def get_chat_model(
+    conversation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    provider, model_id = await AISettingsService(db).get_chat_model(current_user.id, conversation_id)
     return ChatModelResponse(provider=provider, model_id=model_id)
 
 
@@ -73,11 +87,15 @@ async def set_chat_model(
     conversation_id: uuid.UUID,
     payload: ChatModelRequest,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    provider, model_id = AISettingsService().set_chat_model(
-        current_user.id,
-        conversation_id,
-        payload.provider,
-        payload.model_id,
-    )
+    try:
+        provider, model_id = await AISettingsService(db).set_chat_model(
+            current_user.id,
+            conversation_id,
+            payload.provider,
+            payload.model_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ChatModelResponse(provider=provider, model_id=model_id)

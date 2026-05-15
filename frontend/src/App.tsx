@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AppShell, type PageKey } from "./components/AppShell";
+import { Toast } from "./components/Feedback";
 import { PrivacyLockscreen } from "./components/PrivacyLockscreen";
 import { useMindMesh } from "./hooks/useMindMesh";
 import { KnowledgeDashboard } from "./pages/KnowledgeDashboard";
@@ -8,6 +9,8 @@ import type { PreviewTarget } from "./types";
 
 const INACTIVITY_MS = Number(import.meta.env.VITE_INACTIVITY_MINUTES || 10) * 60 * 1000;
 const LOCK_KEY = "mindmesh.sessionLocked";
+export type AccentTheme = "graphite" | "ocean" | "emerald" | "violet" | "amber" | "rose";
+export type DensityMode = "compact" | "comfortable";
 
 export function App() {
   const state = useMindMesh();
@@ -16,6 +19,8 @@ export function App() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("mindmesh.theme") as "dark" | "light") || "dark");
+  const [accentTheme, setAccentTheme] = useState<AccentTheme>(() => (localStorage.getItem("mindmesh.accentTheme") as AccentTheme) || "graphite");
+  const [density, setDensity] = useState<DensityMode>(() => (localStorage.getItem("mindmesh.density") as DensityMode) || "comfortable");
   const [sessionLocked, setSessionLocked] = useState(() => localStorage.getItem(LOCK_KEY) === "true");
   const inactivityTimer = useRef<number | null>(null);
 
@@ -23,6 +28,16 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("mindmesh.theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.accent = accentTheme;
+    localStorage.setItem("mindmesh.accentTheme", accentTheme);
+  }, [accentTheme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.density = density;
+    localStorage.setItem("mindmesh.density", density);
+  }, [density]);
 
   useEffect(() => {
     if (!state.authenticated) return;
@@ -85,6 +100,10 @@ export function App() {
       token={state.token}
       theme={theme}
       onThemeChange={setTheme}
+      accentTheme={accentTheme}
+      onAccentThemeChange={setAccentTheme}
+      density={density}
+      onDensityChange={setDensity}
       onRefresh={state.refresh}
       onLock={lockWorkspace}
       onNewChat={startNewChat}
@@ -93,9 +112,7 @@ export function App() {
       onPreviewTargetChange={setPreviewTarget}
     >
       {state.error && (
-        <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-xl border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger shadow-panel">
-          {state.error}
-        </div>
+        <Toast tone="error">{state.error}</Toast>
       )}
 
       {page === "library" ? (
@@ -104,6 +121,7 @@ export function App() {
           notes={state.notes}
           documents={state.documents}
           conversations={state.conversations}
+          selectedConversationId={selectedConversationId}
           token={state.token}
           onRefresh={state.refresh}
           onPreviewTargetChange={setPreviewTarget}
