@@ -63,6 +63,21 @@ class VectorService:
             ),
         )
 
+    async def update_source_payload(self, user_id: uuid.UUID, source_type: str, source_id: uuid.UUID, payload: dict[str, Any]) -> None:
+        qdrant_client.set_payload(
+            collection_name=self.collection_name,
+            payload=payload,
+            points=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(key="user_id", match=models.MatchValue(value=str(user_id))),
+                        models.FieldCondition(key="source_type", match=models.MatchValue(value=source_type)),
+                        models.FieldCondition(key="source_id", match=models.MatchValue(value=str(source_id))),
+                    ]
+                )
+            ),
+        )
+
     async def scroll(self, filters: models.Filter, limit: int = 100):
         points, _ = qdrant_client.scroll(
             collection_name=self.collection_name,

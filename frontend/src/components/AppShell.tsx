@@ -1,21 +1,29 @@
 import {
+  Archive,
   Brain,
   ChevronLeft,
   ChevronRight,
+  FileText,
   FileUp,
   Library,
+  Loader2,
   LockKeyhole,
   Menu,
   MessageSquare,
+  PanelRightOpen,
   PanelRightClose,
+  Pencil,
   Plus,
   Search,
   Settings,
+  Sparkles,
   Trash2,
   X
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { EmptyState } from "./Feedback";
 import { api } from "../lib/api";
+import type { AccentTheme, DensityMode } from "../App";
 import type { ConversationSummary, DocumentResource, Journal, Note, PreviewTarget, SearchResult } from "../types";
 import { SettingsDialog } from "./SettingsDialog";
 
@@ -33,6 +41,10 @@ type Props = {
   token: string;
   theme: "dark" | "light";
   onThemeChange: (theme: "dark" | "light") => void;
+  accentTheme: AccentTheme;
+  onAccentThemeChange: (theme: AccentTheme) => void;
+  density: DensityMode;
+  onDensityChange: (density: DensityMode) => void;
   onRefresh: () => Promise<void>;
   onLock: () => void;
   onNewChat: () => void;
@@ -54,6 +66,10 @@ export function AppShell({
   token,
   theme,
   onThemeChange,
+  accentTheme,
+  onAccentThemeChange,
+  density,
+  onDensityChange,
   onRefresh,
   onLock,
   onNewChat,
@@ -65,7 +81,8 @@ export function AppShell({
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("mindmesh.sidebar") !== "collapsed");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [contextTab, setContextTab] = useState<"notes" | "documents" | "upload">("notes");
   const [editingNote, setEditingNote] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -74,10 +91,10 @@ export function AppShell({
   const [noteTitle, setNoteTitle] = useState("");
   const [noteContent, setNoteContent] = useState("");
   const [noteTags, setNoteTags] = useState("");
-  const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadScope, setUploadScope] = useState<"chat" | "global">("chat");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadStatus, setUploadStatus] = useState<UploadState>({ state: "idle", message: "" });
+  const [uploadDragActive, setUploadDragActive] = useState(false);
 
   useEffect(() => {
     localStorage.setItem("mindmesh.sidebar", sidebarOpen ? "expanded" : "collapsed");
@@ -124,7 +141,7 @@ export function AppShell({
   }, [journals, notes, storedTags]);
   const tagSuggestions = useMemo(() => getTagSuggestions(noteTags, tagOptions), [noteTags, tagOptions]);
   const memoryCount = journals.length + notes.length;
-  const sidebarWidth = sidebarOpen ? "w-72" : "w-[4.75rem]";
+  const sidebarWidth = sidebarOpen ? "w-64" : "w-16";
   const previewNote = previewTarget?.type === "note" ? notes.find((note) => note.id === previewTarget.id) : null;
   const previewDocument = previewTarget?.type === "document" ? documents.find((document) => document.document_id === previewTarget.id) : null;
 
@@ -194,12 +211,12 @@ export function AppShell({
 
   async function uploadDocument(event: FormEvent) {
     event.preventDefault();
-    if (!uploadFile) return;
+    if (!uploadFile || uploadStatus.state === "loading") return;
     if (uploadScope === "chat" && !selectedConversationId) {
-      setUploadStatus("Start or select a chat before adding a chat-scoped document.");
+      setUploadStatus({ state: "failed", message: "Select a chat before uploading." });
       return;
     }
-    setUploadStatus("Uploading and indexing...");
+    const timers = startUploadStatus(setUploadStatus);
     try {
       const aiConfig = await api.aiConfig(token).catch(() => null);
       const selectedModelId = localStorage.getItem("mindmesh.currentModel") || localStorage.getItem("mindmesh.defaultModel") || aiConfig?.default_model_id || aiConfig?.models[0]?.id;
@@ -210,16 +227,60 @@ export function AppShell({
         selectedModelId,
         selectedModelSupportsVision: Boolean(selectedModel?.supports_vision)
       });
-      setUploadStatus("Document indexed and ready to query.");
+      clearUploadStatusTimers(timers);
+      setUploadStatus({ state: "indexed", message: "Indexed" });
       setUploadFile(null);
       await onRefresh();
     } catch (error) {
-      setUploadStatus(error instanceof Error ? error.message : "Upload failed.");
+      clearUploadStatusTimers(timers);
+      setUploadStatus({ state: "failed", message: error instanceof Error ? error.message : "Failed" });
     }
+  }
+
+  async function attachDocumentToChat(documentId: string) {
+    if (!selectedConversationId) return;
+    await api.updateDocumentScope(token, documentId, { scope: "chat", chat_id: selectedConversationId });
+    await onRefresh();
+  }
+
+  async function removeDocument(documentId: string) {
+    await api.deleteDocument(token, documentId);
+    await onRefresh();
+    if (previewTarget?.type === "document" && previewTarget.id === documentId) {
+      onPreviewTargetChange(null);
+    }
+  }
+
+  async function renameConversation(conversation: ConversationSummary) {
+    const nextTitle = window.prompt("Rename chat", conversation.title || "Untitled chat");
+    if (!nextTitle?.trim()) return;
+    await api.updateConversation(token, conversation.id, nextTitle.trim());
+    await onRefresh();
+  }
+
+  async function archiveConversation(conversationId: string) {
+    await api.archiveConversation(token, conversationId);
+    if (selectedConversationId === conversationId) {
+      onNewChat();
+    }
+    await onRefresh();
+  }
+
+  async function deleteConversation(conversationId: string) {
+    await api.deleteConversation(token, conversationId);
+    if (selectedConversationId === conversationId) {
+      onNewChat();
+    }
+    await onRefresh();
   }
 
   function selectTagSuggestion(tag: string) {
     setNoteTags((current) => applyTagSuggestion(current, tag));
+  }
+
+  function selectUploadFile(file: File | null) {
+    setUploadFile(file);
+    setUploadStatus({ state: "idle", message: "" });
   }
 
   return (
@@ -242,37 +303,37 @@ export function AppShell({
           {sidebarOpen ? <ChevronLeft size={17} /> : <ChevronRight size={17} />}
         </button>
 
-        <div className={`mb-3 flex gap-2 ${sidebarOpen ? "items-center justify-between" : "flex-col items-center"}`}>
+        <div className={`mb-2 flex gap-2 ${sidebarOpen ? "items-center justify-between" : "flex-col items-center"}`}>
           <button
-            className={`flex min-w-0 items-center gap-3 rounded-xl p-2 text-left hover:bg-panel ${sidebarOpen ? "" : "justify-center"}`}
+            className={`flex min-w-0 items-center gap-3 rounded-xl p-1.5 text-left hover:bg-panel ${sidebarOpen ? "" : "justify-center"}`}
             onClick={() => onPage("chats")}
             aria-label="Open chats"
           >
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-foreground text-app">
-              <Brain size={20} />
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-foreground text-app">
+              <Brain size={18} />
             </div>
             {sidebarOpen && (
               <div className="min-w-0">
-                <p className="truncate font-semibold">MindMesh</p>
-                <p className="truncate text-xs text-muted">Local AI workspace</p>
+                <p className="truncate text-sm font-semibold">MindMesh</p>
+                <p className="truncate text-xs text-muted">Private workspace</p>
               </div>
             )}
           </button>
         </div>
 
         {sidebarOpen && (
-          <div className="mb-3">
+          <div className="mb-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
               <input
-                className="control h-10 pl-9"
-                placeholder="Search workspace"
+                className="control h-9 pl-9"
+                placeholder="Search"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
               />
             </div>
             {searchQuery.trim().length >= 2 && (
-              <div className="mt-2 rounded-xl border border-border bg-panel p-2">
+              <div className="mt-2 rounded-xl bg-elevated p-1 shadow-panel">
                 {searchBusy && <p className="px-2 py-2 text-xs text-muted">Searching...</p>}
                 {!searchBusy && searchResults.length === 0 && <p className="px-2 py-2 text-xs text-muted">No matching memories.</p>}
                 {!searchBusy &&
@@ -301,7 +362,7 @@ export function AppShell({
         )}
 
         <div className="mb-3 grid gap-2">
-          <button onClick={onNewChat} className={`button-primary h-10 ${sidebarOpen ? "" : "px-0"}`}>
+          <button onClick={onNewChat} className={`button-primary h-9 ${sidebarOpen ? "" : "px-0"}`}>
             <Plus size={16} />
             {sidebarOpen && "New Chat"}
           </button>
@@ -318,6 +379,7 @@ export function AppShell({
                 key={item.key}
                 onClick={() => onPage(item.key)}
                 className={`sidebar-item ${page === item.key ? "sidebar-item-active" : ""} ${sidebarOpen ? "" : "justify-center px-0"}`}
+                aria-current={page === item.key ? "page" : undefined}
               >
                 <Icon size={17} />
                 {sidebarOpen && item.label}
@@ -327,31 +389,47 @@ export function AppShell({
         </nav>
 
         {sidebarOpen && (
-          <div className="mt-5 flex-1 overflow-y-auto pr-1">
-            <p className="mb-2 px-2 text-xs font-medium uppercase tracking-[0.16em] text-muted">Chat History</p>
+          <div className="mt-4 flex-1 overflow-y-auto pr-1">
+            <p className="mb-1 px-2 text-xs font-medium text-muted">Recent</p>
             {groupedConversations.map((section) => (
-              <div key={section.label} className="mb-4">
-                <p className="mb-1 px-2 text-xs text-muted">{section.label}</p>
+              <div key={section.label} className="mb-3">
+                <p className="mb-1 px-2 text-[0.72rem] text-muted">{section.label}</p>
                 <div className="space-y-1">
                   {section.items.map((conversation) => (
-                    <button
+                    <div
                       key={conversation.id}
-                      onClick={() => onSelectConversation(conversation.id)}
-                      className={`w-full truncate rounded-lg px-2 py-2 text-left text-sm hover:bg-panel ${
+                      className={`group flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-panel ${
                         selectedConversationId === conversation.id ? "bg-panel text-foreground" : "text-soft"
                       }`}
                     >
-                      {conversation.title || "Untitled chat"}
-                    </button>
+                      <button className="min-w-0 flex-1 truncate py-1 text-left text-sm" onClick={() => onSelectConversation(conversation.id)}>
+                        {conversation.title || "Untitled chat"}
+                      </button>
+                      <button className="icon-button h-7 w-7 opacity-0 transition group-hover:opacity-80 focus-visible:opacity-100" title="Rename chat" aria-label="Rename chat" onClick={() => void renameConversation(conversation)}>
+                        <Pencil size={13} />
+                      </button>
+                      <button className="icon-button h-7 w-7 opacity-0 transition group-hover:opacity-80 focus-visible:opacity-100" title="Archive chat" aria-label="Archive chat" onClick={() => void archiveConversation(conversation.id)}>
+                        <Archive size={13} />
+                      </button>
+                      <button className="icon-button h-7 w-7 text-danger opacity-0 transition group-hover:opacity-80 focus-visible:opacity-100" title="Delete chat" aria-label="Delete chat" onClick={() => void deleteConversation(conversation.id)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
             ))}
-            {!conversations.length && <p className="rounded-xl bg-panel px-3 py-3 text-sm leading-5 text-muted">No saved chats yet.</p>}
+            {!conversations.length && (
+              <EmptyState
+                icon={<MessageSquare size={18} />}
+                title="No saved chats"
+                description="Start a new chat and it will appear here."
+              />
+            )}
           </div>
         )}
 
-        <div className="mt-auto border-t border-border pt-3">
+        <div className="mt-auto pt-3">
           <div className={`flex items-center gap-2 ${sidebarOpen ? "" : "flex-col"}`}>
             <button
               onClick={() => setSettingsOpen(true)}
@@ -377,36 +455,64 @@ export function AppShell({
       </aside>
 
       <main className="app-main">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-3 md:px-4">
+        <header className="flex h-12 shrink-0 items-center justify-between px-3 md:px-4">
           <button className="icon-button md:hidden" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation">
             <Menu size={19} />
           </button>
           <div className="min-w-0 flex-1 px-2">
-            <p className="truncate text-sm font-medium">{page === "chats" ? "Chats" : "Library"}</p>
+            <p className="truncate text-sm font-semibold">{page === "chats" ? "Chats" : "Library"}</p>
             <p className="truncate text-xs text-muted">{page === "chats" ? "Ask and organize your private knowledge" : "Notes, documents, media, and insights"}</p>
           </div>
           <button className="icon-button" onClick={() => setRightPanelOpen((value) => !value)} aria-label="Toggle context panel">
-            <PanelRightClose size={18} />
+            {rightPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </button>
         </header>
         {children}
       </main>
 
-      <aside className={`right-panel ${rightPanelOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0 lg:w-0 lg:border-l-0 lg:p-0"}`}>
-        <div className="flex h-14 items-center justify-between border-b border-border px-4">
-          <div>
-            <p className="text-sm font-semibold">{editingNote ? "Note Editor" : previewTarget ? "Preview" : "Context"}</p>
-            <p className="text-xs text-muted">{editingNote ? "Linked to workspace" : previewTarget ? "Source details" : "Notes grouped by date"}</p>
+      {rightPanelOpen && (
+        <button
+          className="fixed inset-0 z-20 bg-black/20 backdrop-blur-[1px] lg:hidden"
+          onClick={() => setRightPanelOpen(false)}
+          aria-label="Close context drawer"
+        />
+      )}
+
+      <aside className={`right-panel ${rightPanelOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0 lg:w-0 lg:border-l-0 lg:p-0 lg:opacity-0"}`}>
+        <div className="flex h-12 items-center justify-between px-4">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{editingNote ? "Note" : previewTarget ? "Preview" : "Context"}</p>
+            <p className="truncate text-xs text-muted">{editingNote ? "Edit workspace note" : previewTarget ? "Source details" : `${memoryCount} memories`}</p>
           </div>
           <button className="icon-button" onClick={() => (editingNote ? setEditingNote(false) : setRightPanelOpen(false))} aria-label="Close right panel">
             <X size={18} />
           </button>
         </div>
 
-        <div className="flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {!editingNote && !previewTarget && (
+          <div className="context-tabs" role="tablist" aria-label="Context sections">
+            {[
+              { key: "notes" as const, label: "Notes" },
+              { key: "documents" as const, label: "Docs" },
+              { key: "upload" as const, label: "Upload" }
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={contextTab === tab.key}
+                className={`context-tab ${contextTab === tab.key ? "context-tab-active" : ""}`}
+                onClick={() => setContextTab(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="h-[calc(100vh-3rem)] overflow-y-auto px-4 pb-4">
           {editingNote ? (
-            <form onSubmit={createNote} className="space-y-3">
+            <form onSubmit={createNote} className="space-y-3 pt-2">
               <input className="control" placeholder="Note title" value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} />
               <div className="relative">
                 <input
@@ -449,8 +555,8 @@ export function AppShell({
               <Metadata label="Updated" value={previewNote.updated_at ? formatDate(previewNote.updated_at) : "Not updated"} />
               <Metadata label="Source" value={previewNote.source || "MindMesh note"} />
               <Metadata label="Tags" value={previewNote.tags.length ? previewNote.tags.join(", ") : "None"} />
-              <div className="mt-4 rounded-xl bg-elevated p-3">
-                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted">Snippet</p>
+              <div className="mt-4 rounded-xl bg-panel p-3">
+                <p className="text-xs font-semibold uppercase text-muted">Snippet</p>
                 <p className="mt-2 line-clamp-6 text-sm leading-6 text-soft">{previewNote.content}</p>
               </div>
               <button className="button-primary mt-4 w-full" onClick={() => editNote(previewNote)}>Edit Note</button>
@@ -464,101 +570,177 @@ export function AppShell({
               <Metadata label="Status" value={previewDocument.requires_multimodal ? "Ready, but image understanding needs a multimodal model" : previewDocument.status} />
               <Metadata label="MinIO path" value={previewDocument.minio_object_path} />
             </PreviewShell>
+          ) : contextTab === "notes" ? (
+            <section className="pt-2">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Notes</h3>
+                <button className="button-ghost h-8 px-2 text-xs" onClick={openNewNote}>
+                  <Plus size={14} />
+                  New
+                </button>
+              </div>
+              <div className="space-y-4">
+                {groupedNotes.slice(0, 4).map((section) => (
+                  <div key={section.label}>
+                    <p className="mb-1 px-1 text-xs text-muted">{section.label}</p>
+                    <div className="space-y-1">
+                      {section.items.slice(0, 5).map((note) => (
+                        <button key={note.id} onClick={() => openExistingNote(note)} className="context-list-item">
+                          <p className="truncate text-sm font-medium">{note.title}</p>
+                          <p className="mt-0.5 line-clamp-1 text-xs text-muted">{note.content}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {!notes.length && (
+                  <EmptyState
+                    icon={<Sparkles size={18} />}
+                    title="No notes yet"
+                    description="Save a note here and it becomes searchable."
+                  />
+                )}
+              </div>
+            </section>
+          ) : contextTab === "documents" ? (
+            <section className="pt-2">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Documents</h3>
+                <button className="button-ghost h-8 px-2 text-xs" onClick={() => onPage("library")}>
+                  View all
+                </button>
+              </div>
+              <div className="space-y-1">
+                {documents.slice(0, 10).map((document) => (
+                  <div key={document.document_id} className="context-list-item group">
+                    <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => onPreviewTargetChange({ type: "document", id: document.document_id })}>
+                      <FileText size={14} className="shrink-0 text-muted" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{document.file_name}</p>
+                        <p className="truncate text-xs text-muted">{document.scope === "chat" ? "Chat" : "Global"} - {document.chunk_count} chunks</p>
+                      </div>
+                    </button>
+                    <div className="mt-2 flex gap-2 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+                      <button className="button-ghost h-7 flex-1 px-2 text-xs" onClick={() => void attachDocumentToChat(document.document_id)} disabled={!selectedConversationId || document.scope === "chat"}>
+                        Attach
+                      </button>
+                      <button className="button-ghost h-7 flex-1 px-2 text-xs text-danger" onClick={() => void removeDocument(document.document_id)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {!documents.length && (
+                  <EmptyState
+                    icon={<FileText size={18} />}
+                    title="No documents"
+                    description="Upload a document to make it retrievable."
+                  />
+                )}
+              </div>
+            </section>
           ) : (
-            <div className="space-y-5">
-              <section>
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">Notes</h3>
-                  <button className="button-ghost h-8 px-2 text-xs" onClick={openNewNote}>
-                    <Plus size={14} />
-                    New
+            <section className="pt-2">
+              <h3 className="mb-3 text-sm font-semibold">Upload document</h3>
+              <form onSubmit={uploadDocument} className="space-y-3">
+                <div className="inline-flex rounded-xl bg-panel p-1">
+                  <button type="button" className={`context-segment ${uploadScope === "chat" ? "context-segment-active" : ""}`} onClick={() => setUploadScope("chat")} disabled={uploadStatus.state === "loading"}>
+                    Chat
+                  </button>
+                  <button type="button" className={`context-segment ${uploadScope === "global" ? "context-segment-active" : ""}`} onClick={() => setUploadScope("global")} disabled={uploadStatus.state === "loading"}>
+                    Global
                   </button>
                 </div>
-                <div className="space-y-4">
-                  {groupedNotes.map((section) => (
-                    <div key={section.label}>
-                      <p className="mb-2 text-xs font-medium text-muted">{section.label}</p>
-                      <div className="space-y-2">
-                        {section.items.map((note) => (
-                          <button key={note.id} onClick={() => openExistingNote(note)} className="block w-full rounded-xl border border-border bg-panel p-3 text-left hover:bg-elevated">
-                            <p className="truncate text-sm font-medium">{note.title}</p>
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{note.content}</p>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {!notes.length && <p className="rounded-xl bg-panel p-3 text-sm text-muted">No notes yet.</p>}
-                </div>
-              </section>
-
-              <section className="rounded-2xl border border-border bg-panel p-4">
-                <h3 className="text-sm font-semibold">Quick Insight</h3>
-                <p className="mt-2 text-sm leading-6 text-muted">
-                  {memoryCount} {memoryCount === 1 ? "memory" : "memories"} available for retrieval across your local workspace.
-                </p>
-              </section>
-            </div>
+                <label
+                  className={`drag-upload-pane ${uploadDragActive ? "drag-upload-pane-active" : ""} ${uploadStatus.state === "loading" ? "opacity-70" : ""}`}
+                  htmlFor="context-document-upload"
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    if (uploadStatus.state !== "loading") setUploadDragActive(true);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    if (uploadStatus.state !== "loading") setUploadDragActive(true);
+                  }}
+                  onDragLeave={(event) => {
+                    event.preventDefault();
+                    setUploadDragActive(false);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setUploadDragActive(false);
+                    if (uploadStatus.state === "loading") return;
+                    selectUploadFile(event.dataTransfer.files?.[0] || null);
+                  }}
+                >
+                  <span className="drag-upload-icon">
+                    <FileUp size={22} />
+                  </span>
+                  <span className="block max-w-full truncate text-sm font-semibold text-foreground">
+                    {uploadFile ? uploadFile.name : "Drop document here"}
+                  </span>
+                  <span className="text-xs text-muted">
+                    {uploadFile ? "Click to choose a different file" : "or click to browse PDF, DOCX, TXT, images, slides"}
+                  </span>
+                </label>
+                <input
+                  key={uploadFile ? uploadFile.name : "empty"}
+                  id="context-document-upload"
+                  className="sr-only"
+                  type="file"
+                  accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp,.ppt,.pptx,image/*,text/plain,application/pdf"
+                  onChange={(event) => {
+                    selectUploadFile(event.target.files?.[0] || null);
+                  }}
+                  disabled={uploadStatus.state === "loading"}
+                />
+                {uploadStatus.message && (
+                  <div className={`upload-status upload-status-${uploadStatus.state}`}>
+                    {uploadStatus.state === "loading" && <Loader2 size={16} className="animate-spin" />}
+                    <span>{uploadStatus.message}</span>
+                  </div>
+                )}
+                <button className="button-primary w-full" disabled={!uploadFile || uploadStatus.state === "loading"}>
+                  {uploadStatus.state === "loading" ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} />}
+                  Upload
+                </button>
+              </form>
+            </section>
           )}
-          </div>
-          <div className="border-t border-border p-4">
-            <button className="button-primary w-full" onClick={() => {
-              setUploadOpen(true);
-              setUploadScope(selectedConversationId ? "chat" : "global");
-              setUploadStatus("");
-            }}>
-              <FileUp size={16} />
-              Upload Document
-            </button>
-          </div>
         </div>
       </aside>
 
-      {uploadOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
-          <form onSubmit={uploadDocument} className="modal-panel w-full max-w-md p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-semibold">Upload Document</h2>
-                <p className="text-sm text-muted">Index a file for this chat or the global library.</p>
-              </div>
-              <button type="button" className="icon-button" onClick={() => setUploadOpen(false)} aria-label="Close upload dialog">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <input
-                className="control"
-                type="file"
-                accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp,.ppt,.pptx,image/*,text/plain,application/pdf"
-                onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
-              />
-              <div>
-                <p className="field-label">Document Scope</p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <button type="button" className={`button-ghost ${uploadScope === "chat" ? "ring-2 ring-foreground/20" : ""}`} onClick={() => setUploadScope("chat")}>
-                    Current chat
-                  </button>
-                  <button type="button" className={`button-ghost ${uploadScope === "global" ? "ring-2 ring-foreground/20" : ""}`} onClick={() => setUploadScope("global")}>
-                    Global library
-                  </button>
-                </div>
-              </div>
-              <p className="text-xs leading-5 text-muted">
-                Chat documents stay private to this chat. Global documents are available across all chats after indexing.
-              </p>
-              {uploadStatus && <p className="rounded-xl bg-panel p-3 text-sm text-muted">{uploadStatus}</p>}
-              <button className="button-primary w-full" disabled={!uploadFile}>
-                Upload & Index
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <SettingsDialog open={settingsOpen} token={token} onClose={() => setSettingsOpen(false)} theme={theme} onThemeChange={onThemeChange} />
+      <SettingsDialog
+        open={settingsOpen}
+        token={token}
+        onClose={() => setSettingsOpen(false)}
+        theme={theme}
+        onThemeChange={onThemeChange}
+        accentTheme={accentTheme}
+        onAccentThemeChange={onAccentThemeChange}
+        density={density}
+        onDensityChange={onDensityChange}
+      />
     </div>
   );
+}
+
+type UploadState = {
+  state: "idle" | "loading" | "indexed" | "failed";
+  message: string;
+};
+
+function startUploadStatus(setUploadStatus: (state: UploadState) => void) {
+  setUploadStatus({ state: "loading", message: "Preparing upload..." });
+  return [
+    window.setTimeout(() => setUploadStatus({ state: "loading", message: "Uploading document..." }), 350),
+    window.setTimeout(() => setUploadStatus({ state: "loading", message: "Processing file..." }), 900),
+    window.setTimeout(() => setUploadStatus({ state: "loading", message: "Indexing document..." }), 1500)
+  ];
+}
+
+function clearUploadStatusTimers(timers: number[]) {
+  timers.forEach((timer) => window.clearTimeout(timer));
 }
 
 function parseTags(raw: string) {
@@ -642,7 +824,7 @@ function PreviewShell({ title, type, onClose, children }: { title: string; type:
     <section className="rounded-2xl border border-border bg-panel p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted">{type}</p>
+          <p className="text-xs font-semibold uppercase text-muted">{type}</p>
           <h3 className="mt-1 truncate text-base font-semibold">{title}</h3>
         </div>
         <button className="icon-button shrink-0" onClick={onClose} aria-label="Close preview">
@@ -657,7 +839,7 @@ function PreviewShell({ title, type, onClose, children }: { title: string; type:
 function Metadata({ label, value }: { label: string; value: string }) {
   return (
     <div className="mb-2 rounded-xl bg-elevated px-3 py-2">
-      <p className="text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted">{label}</p>
+      <p className="text-[0.68rem] font-semibold uppercase text-muted">{label}</p>
       <p className="mt-1 break-words text-sm text-soft">{value}</p>
     </div>
   );

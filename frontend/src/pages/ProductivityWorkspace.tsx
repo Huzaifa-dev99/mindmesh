@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Bot, SendHorizontal, UserRound } from "lucide-react";
+import { Bot, BrainCircuit, Library, Search, SendHorizontal, UserRound } from "lucide-react";
+import { LoadingDots, SkeletonRows } from "../components/Feedback";
 import { api } from "../lib/api";
 import type { AIModel, ChatMessage, PreviewTarget, SearchResult } from "../types";
 
@@ -15,6 +16,12 @@ const welcomeMessage: ChatMessage = {
   role: "assistant",
   content: "Welcome back. Ask me to search your notes, summarize a thread, or organize your knowledge."
 };
+
+const suggestions = [
+  { icon: Search, label: "Find evidence", prompt: "Find the strongest evidence across my notes and uploaded documents." },
+  { icon: BrainCircuit, label: "Summarize next actions", prompt: "Summarize this chat so far and suggest the next actions." },
+  { icon: Library, label: "Scan library patterns", prompt: "What useful patterns can you infer from my current notes and documents?" }
+];
 
 export function ProductivityWorkspace({ token, conversationId, onConversationChange, onRefresh, onPreviewTargetChange }: Props) {
   const [message, setMessage] = useState("");
@@ -112,28 +119,49 @@ export function ProductivityWorkspace({ token, conversationId, onConversationCha
     <div className="chat-layout">
       <div ref={scrollRef} className="chat-scroll">
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold tracking-tight">Personal Knowledge Chat</h1>
-            <p className="mt-1 text-sm text-muted">Clear, focused conversations grounded in your local memory.</p>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <select className="control max-w-xs" value={selectedModelId} onChange={(event) => void changeModel(event.target.value)} aria-label="Select chat model">
-                {models.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}
-              </select>
-              {selectedModel?.capabilities.map((capability) => <span key={capability} className="badge">{capability}</span>)}
+          <div className="chat-intro">
+            <div>
+              <p className="chat-intro-meta">
+                {provider}
+                {selectedModel ? ` - ${selectedModel.display_name}` : ""}
+              </p>
+              <h1 className="text-2xl font-semibold tracking-normal">Personal Knowledge Chat</h1>
+              <p className="mt-1 max-w-xl text-sm leading-6 text-muted">Ask, retrieve, and synthesize from your private notes and documents.</p>
             </div>
             {selectedModel && !selectedModel.supports_vision && (
-              <p className="mt-2 text-xs text-muted">This model does not support multimodal input. Image documents require a Vision or Multimodal model.</p>
+              <p className="mt-3 max-w-xl rounded-xl bg-panel px-3 py-2 text-xs leading-5 text-muted">
+                This model does not support multimodal input. Image documents require a Vision or Multimodal model.
+              </p>
             )}
           </div>
 
-          <div className="space-y-5">
-            {loadingConversation && <p className="text-sm text-muted">Opening chat...</p>}
+          {messages.length === 1 && !conversationId && (
+            <div className="mb-6 flex flex-wrap gap-2">
+              {suggestions.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.label}
+                    className="suggestion-chip"
+                    type="button"
+                    onClick={() => setMessage(item.prompt)}
+                  >
+                    <Icon size={16} className="shrink-0 text-secondary" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="space-y-5" aria-live="polite">
+            {loadingConversation && <SkeletonRows rows={3} />}
             {messages.map((item, index) => (
               <article key={`${item.role}-${index}`} className={`message-row ${item.role === "user" ? "message-row-user" : ""}`}>
                 <div className={`message-avatar ${item.role === "user" ? "message-avatar-user" : ""}`}>
                   {item.role === "user" ? <UserRound size={16} /> : <Bot size={16} />}
                 </div>
-                <div className={`message-bubble ${item.role === "user" ? "message-bubble-user" : ""}`}>
+                <div className={`message-bubble whitespace-pre-wrap ${item.role === "user" ? "message-bubble-user" : ""}`}>
                   {item.content}
                   {item.role === "assistant" && item.citations && item.citations.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -154,27 +182,56 @@ export function ProductivityWorkspace({ token, conversationId, onConversationCha
                 </div>
               </article>
             ))}
+            {busy && (
+              <article className="message-row">
+                <div className="message-avatar">
+                  <Bot size={16} />
+                </div>
+                <div className="message-bubble">
+                  <LoadingDots label="MindMesh is thinking" />
+                </div>
+              </article>
+            )}
           </div>
         </div>
       </div>
 
       <div className="composer-wrap">
         <form onSubmit={submitChat} className="composer">
-          <textarea
-            className="composer-input"
-            placeholder="Message MindMesh..."
-            value={message}
-            rows={1}
-            onChange={(event) => setMessage(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submitChat();
-              }
-            }}
-          />
+          <div className="flex items-start gap-2">
+            <textarea
+              className="composer-input min-w-0 flex-1"
+              placeholder="Message MindMesh..."
+              aria-label="Message MindMesh"
+              value={message}
+              rows={1}
+              onChange={(event) => setMessage(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submitChat();
+                }
+              }}
+            />
+            <select
+              className="model-select"
+              value={selectedModelId}
+              onChange={(event) => void changeModel(event.target.value)}
+              aria-label="Select chat model"
+              title={selectedModel?.display_name || "Select model"}
+            >
+              {models.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}
+            </select>
+          </div>
           <div className="flex items-center justify-between pt-2">
-            <span className="px-2 text-xs text-muted">Shift + Enter for a new line</span>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-2">
+              <span className="text-xs text-muted">Shift + Enter for a new line</span>
+              {selectedModel?.capabilities.length ? (
+                <span className="hidden truncate text-xs text-muted sm:inline">
+                  - {selectedModel.capabilities.slice(0, 2).join(", ")}
+                </span>
+              ) : null}
+            </div>
             <button className="button-primary h-9 w-9 rounded-full p-0" disabled={busy || !message.trim()} aria-label="Send message">
               <SendHorizontal size={16} />
             </button>

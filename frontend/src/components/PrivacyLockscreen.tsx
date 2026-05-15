@@ -113,26 +113,28 @@ export function PrivacyLockscreen({ mode = "initial", onAuthenticated, onUnlock 
           <Brain size={27} />
         </div>
         <div className="mb-7 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">MindMesh</h1>
+          <h1 className="text-2xl font-semibold">MindMesh</h1>
           <p className="mt-2 text-sm leading-6 text-muted">{title}</p>
         </div>
 
         <form onSubmit={submit} className="space-y-3">
           <input
-            className="control h-12 text-center text-lg tracking-[0.35em]"
+            className="control h-12 text-center text-lg"
             value={pin}
             onChange={(event) => setPin(event.target.value)}
             placeholder="PIN"
             type="password"
+            aria-label="Workspace PIN"
             autoFocus
           />
           {shouldCreatePin && (
             <input
-              className="control h-12 text-center text-lg tracking-[0.35em]"
+              className="control h-12 text-center text-lg"
               value={confirmPin}
               onChange={(event) => setConfirmPin(event.target.value)}
               placeholder="Confirm"
               type="password"
+              aria-label="Confirm workspace PIN"
             />
           )}
           {error && <p className="rounded-xl border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}

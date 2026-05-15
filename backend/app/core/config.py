@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
 
     # Vector database configuration
-    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_URL: str = "http://localhost:6335"
     QDRANT_COLLECTION: str = "mindmesh_memories"
     QDRANT_NOTES_COLLECTION: str = "notes"
     QDRANT_DOCUMENTS_COLLECTION: str = "documents"
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = "mindmesh-password"
     MINIO_BUCKET: str = "mindmesh-documents"
     MINIO_SECURE: bool = False
-    MINIO_DATA_PATH: str = "/minio-data"
+    MINIO_DATA_PATH: str = ".mindmesh-data/minio"
 
     # Application settings
     APP_ENV: str = "development"

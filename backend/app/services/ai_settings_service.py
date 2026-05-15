@@ -1,10 +1,17 @@
+import base64
+import hashlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
+from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.ai_settings import AIProviderConfig, ChatModelSelection
+from app.models.conversation import Conversation
 from app.schemas.ai_settings import AIModelResponse
 
 
@@ -18,12 +25,11 @@ class StoredAIConfig:
     models: list[AIModelResponse] = field(default_factory=list)
 
 
-_USER_CONFIGS: dict[str, StoredAIConfig] = {}
-_CHAT_MODELS: dict[str, tuple[str, str]] = {}
-
-
 class AISettingsService:
     providers = ["OpenAI", "Gemini", "Claude", "Groq"]
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
     async def save_config(
         self,
@@ -34,21 +40,48 @@ class AISettingsService:
     ) -> StoredAIConfig:
         normalized_provider = normalize_provider(provider)
         models = await self.list_models_for_key(normalized_provider, api_key)
-        config = StoredAIConfig(
-            provider=normalized_provider,
+        model_payloads = [model.model_dump() for model in models]
+        verified_at = datetime.now(timezone.utc)
+
+        result = await self.session.execute(
+            select(AIProviderConfig).where(AIProviderConfig.user_id == user_id)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            row = AIProviderConfig(user_id=user_id, encrypted_api_key="")
+            self.session.add(row)
+
+        row.provider = normalized_provider
+        row.encrypted_api_key = encrypt_secret(api_key)
+        row.default_model_id = default_model_id or (models[0].id if models else None)
+        row.is_verified = True
+        row.verified_at = verified_at
+        row.models = model_payloads
+        await self.session.flush()
+
+        return StoredAIConfig(
+            provider=row.provider,
             api_key=api_key,
-            default_model_id=default_model_id or (models[0].id if models else None),
-            is_verified=True,
-            verified_at=datetime.now(timezone.utc),
+            default_model_id=row.default_model_id,
+            is_verified=row.is_verified,
+            verified_at=row.verified_at,
             models=models,
         )
-        _USER_CONFIGS[str(user_id)] = config
-        return config
 
-    def get_config(self, user_id: uuid.UUID) -> StoredAIConfig | None:
-        config = _USER_CONFIGS.get(str(user_id))
-        if config:
-            return config
+    async def get_config(self, user_id: uuid.UUID) -> StoredAIConfig | None:
+        result = await self.session.execute(
+            select(AIProviderConfig).where(AIProviderConfig.user_id == user_id)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            return StoredAIConfig(
+                provider=row.provider,
+                api_key=decrypt_secret(row.encrypted_api_key),
+                default_model_id=row.default_model_id,
+                is_verified=row.is_verified,
+                verified_at=row.verified_at,
+                models=[AIModelResponse.model_validate(model) for model in row.models],
+            )
         if settings.GROQ_API_KEY:
             return StoredAIConfig(
                 provider="Groq",
@@ -60,8 +93,14 @@ class AISettingsService:
             )
         return None
 
+    async def public_config(self, user_id: uuid.UUID) -> StoredAIConfig | None:
+        config = await self.get_config(user_id)
+        if config:
+            config.api_key = ""
+        return config
+
     async def list_models(self, user_id: uuid.UUID, provider: str | None = None) -> list[AIModelResponse]:
-        config = self.get_config(user_id)
+        config = await self.get_config(user_id)
         if config and (provider is None or normalize_provider(provider) == config.provider):
             return config.models or static_models(config.provider)
         return static_models(normalize_provider(provider or "Groq"))
@@ -82,23 +121,57 @@ class AISettingsService:
             return [model_from_id("Claude", model_id) for model_id in ids] or static_models("Claude")
         return static_models(provider)
 
-    def set_chat_model(self, user_id: uuid.UUID, conversation_id: uuid.UUID, provider: str, model_id: str) -> tuple[str, str]:
-        selected = (normalize_provider(provider), model_id)
-        _CHAT_MODELS[f"{user_id}:{conversation_id}"] = selected
-        return selected
+    async def set_chat_model(
+        self,
+        user_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        provider: str,
+        model_id: str,
+    ) -> tuple[str, str]:
+        conversation_result = await self.session.execute(
+            select(Conversation).where(
+                Conversation.id == conversation_id,
+                Conversation.user_id == user_id,
+                Conversation.deleted_at.is_(None),
+            )
+        )
+        if conversation_result.scalar_one_or_none() is None:
+            raise ValueError("Conversation not found")
 
-    def get_chat_model(self, user_id: uuid.UUID, conversation_id: uuid.UUID | None) -> tuple[str | None, str | None]:
+        normalized_provider = normalize_provider(provider)
+        result = await self.session.execute(
+            select(ChatModelSelection).where(
+                ChatModelSelection.user_id == user_id,
+                ChatModelSelection.conversation_id == conversation_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            row = ChatModelSelection(user_id=user_id, conversation_id=conversation_id)
+            self.session.add(row)
+        row.provider = normalized_provider
+        row.model_id = model_id
+        await self.session.flush()
+        return normalized_provider, model_id
+
+    async def get_chat_model(self, user_id: uuid.UUID, conversation_id: uuid.UUID | None) -> tuple[str | None, str | None]:
         if conversation_id:
-            selected = _CHAT_MODELS.get(f"{user_id}:{conversation_id}")
+            result = await self.session.execute(
+                select(ChatModelSelection).where(
+                    ChatModelSelection.user_id == user_id,
+                    ChatModelSelection.conversation_id == conversation_id,
+                )
+            )
+            selected = result.scalar_one_or_none()
             if selected:
-                return selected
-        config = self.get_config(user_id)
+                return selected.provider, selected.model_id
+        config = await self.get_config(user_id)
         if config:
             return config.provider, config.default_model_id
         return None, None
 
-    def get_api_key(self, user_id: uuid.UUID, provider: str | None = None) -> str | None:
-        config = self.get_config(user_id)
+    async def get_api_key(self, user_id: uuid.UUID, provider: str | None = None) -> str | None:
+        config = await self.get_config(user_id)
         if config and (provider is None or normalize_provider(provider) == config.provider):
             return config.api_key
         return None
@@ -117,7 +190,10 @@ async def fetch_gemini_models(api_key: str) -> list[str]:
         response = await client.get("https://generativelanguage.googleapis.com/v1beta/models", params={"key": api_key})
         response.raise_for_status()
         payload = response.json()
-    return sorted((item.get("name", "").removeprefix("models/") for item in payload.get("models", [])), key=str.lower)
+    return sorted(
+        (item.get("name", "").removeprefix("models/") for item in payload.get("models", []) if item.get("name")),
+        key=str.lower,
+    )
 
 
 async def fetch_claude_models(api_key: str) -> list[str]:
@@ -131,8 +207,8 @@ async def fetch_claude_models(api_key: str) -> list[str]:
     return sorted(item["id"] for item in payload.get("data", []) if isinstance(item, dict) and item.get("id"))
 
 
-def normalize_provider(provider: str) -> str:
-    match = provider.strip().lower()
+def normalize_provider(provider: str | None) -> str:
+    match = (provider or "Groq").strip().lower()
     if match == "openai":
         return "OpenAI"
     if match == "gemini":
@@ -178,3 +254,19 @@ def static_models(provider: str) -> list[AIModelResponse]:
         "Claude": ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
     }
     return [model_from_id(provider, model_id) for model_id in catalog.get(provider, catalog["Groq"])]
+
+
+def encrypt_secret(value: str) -> str:
+    return _fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_secret(value: str) -> str:
+    try:
+        return _fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise ValueError("Stored API key could not be decrypted") from exc
+
+
+def _fernet() -> Fernet:
+    digest = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))

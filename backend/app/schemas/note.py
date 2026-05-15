@@ -13,6 +13,8 @@ class NoteBase(BaseModel):
     source: str | None = Field(None, max_length=255)
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    scope: str = "global"
+    chat_id: uuid.UUID | None = None
 
 
 class NoteCreate(NoteBase):
@@ -25,6 +27,13 @@ class NoteUpdate(BaseModel):
     source: str | None = Field(None, max_length=255)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
+    scope: str | None = None
+    chat_id: uuid.UUID | None = None
+
+
+class NoteScopeUpdate(BaseModel):
+    scope: str
+    chat_id: uuid.UUID | None = None
 
 
 class NoteResponse(NoteBase, ORMModel):

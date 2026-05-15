@@ -24,6 +24,7 @@ def _summary(conversation: Conversation) -> ConversationSummary:
         updated_at=conversation.updated_at,
         message_count=len(messages),
         last_message_at=last_message.created_at if last_message else None,
+        archived_at=conversation.archived_at,
     )
 
 
@@ -82,4 +83,18 @@ async def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     await repository.soft_delete(conversation)
+    return Response(status_code=204)
+
+
+@router.patch("/{conversation_id}/archive", status_code=204)
+async def archive_conversation(
+    conversation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    repository = ConversationRepository(db)
+    conversation = await repository.get_by_id(current_user.id, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await repository.archive(conversation)
     return Response(status_code=204)

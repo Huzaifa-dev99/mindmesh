@@ -22,6 +22,7 @@ class ConversationRepository:
                     Conversation.id == conversation_id,
                     Conversation.user_id == user_id,
                     Conversation.deleted_at.is_(None),
+                    Conversation.archived_at.is_(None),
                 )
             )
             conversation = result.scalar_one_or_none()
@@ -61,7 +62,11 @@ class ConversationRepository:
         result = await self.session.execute(
             select(Conversation)
             .options(selectinload(Conversation.messages))
-            .where(Conversation.user_id == user_id, Conversation.deleted_at.is_(None))
+            .where(
+                Conversation.user_id == user_id,
+                Conversation.deleted_at.is_(None),
+                Conversation.archived_at.is_(None),
+            )
             .order_by(Conversation.created_at.desc())
             .limit(limit)
         )
@@ -75,4 +80,8 @@ class ConversationRepository:
 
     async def soft_delete(self, conversation: Conversation) -> None:
         conversation.deleted_at = func.now()
+        await self.session.flush()
+
+    async def archive(self, conversation: Conversation) -> None:
+        conversation.archived_at = func.now()
         await self.session.flush()

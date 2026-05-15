@@ -13,6 +13,8 @@ class Note(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str | None] = mapped_column(String(255))
+    scope: Mapped[str] = mapped_column(String(20), default="global", nullable=False)
+    chat_id: Mapped[object | None] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id"), index=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
     user_id: Mapped[object] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
 

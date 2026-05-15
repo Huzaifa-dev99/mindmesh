@@ -1,15 +1,18 @@
+from __future__ import annotations
+
 import re
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import httpx
-from qdrant_client.http import models
 
-from app.ai.embeddings.local import FastEmbedProvider
 from app.ai.providers.groq import GroqChatProvider
 from app.core.config import settings
 from app.schemas.search import SearchResult
-from app.services.vector_service import VectorService
+
+if TYPE_CHECKING:
+    from app.services.vector_service import VectorService
 
 try:
     from langchain_core.prompts import PromptTemplate
@@ -26,6 +29,8 @@ except ImportError:  # Keeps local Docker builds usable when LangChain is not in
             return self.template.format(**kwargs)
 
 LOW_CONFIDENCE_THRESHOLD = 0.25
+MAX_HISTORY_SUMMARY_CHARS = 1800
+MAX_RETRIEVAL_QUERY_CHARS = 3000
 
 
 @dataclass
@@ -36,59 +41,230 @@ class AgentResult:
     metadata: dict
 
 
+@dataclass
+class RetrievedContext:
+    source_type: str
+    context: str
+    citations: list[SearchResult]
+    confidence: float
+
+
+def create_embedding_provider():
+    from app.ai.embeddings.local import FastEmbedProvider
+
+    return FastEmbedProvider()
+
+
+def create_vector_service(collection_name: str):
+    from app.services.vector_service import VectorService
+
+    return VectorService(collection_name)
+
+
+def get_qdrant_models():
+    from qdrant_client.http import models
+
+    return models
+
+
+def build_chat_history_summary(messages: list[Any], max_messages: int = 12, max_chars: int = MAX_HISTORY_SUMMARY_CHARS) -> str:
+    if not messages:
+        return "No previous chat history."
+
+    ordered_messages = sorted(messages, key=lambda item: str(getattr(item, "created_at", "") or ""))
+    selected_messages = ordered_messages[-max_messages:]
+    lines = []
+    for message in selected_messages:
+        role = getattr(message, "role", "message")
+        content = " ".join(str(getattr(message, "content", "")).split())
+        if not content:
+            continue
+        lines.append(f"{role}: {content}")
+
+    summary = "\n".join(lines).strip()
+    if not summary:
+        return "No previous chat history."
+    if len(summary) > max_chars:
+        return summary[-max_chars:].lstrip()
+    return summary
+
+
+def build_retrieval_query(query: str, chat_history_summary: str | None = None) -> str:
+    history = (chat_history_summary or "No previous chat history.").strip()
+    retrieval_query = f"Current user question:\n{query.strip()}\n\nRelevant chat history summary:\n{history}"
+    if len(retrieval_query) > MAX_RETRIEVAL_QUERY_CHARS:
+        return retrieval_query[:MAX_RETRIEVAL_QUERY_CHARS]
+    return retrieval_query
+
+
+def has_prior_chat_history(chat_history_summary: str | None) -> bool:
+    return bool(chat_history_summary and chat_history_summary.strip() != "No previous chat history.")
+
+
 class NotesAgent:
     """RAG-only notes agent. It never answers without retrieved user note context."""
 
-    def __init__(self) -> None:
-        self.embeddings = FastEmbedProvider()
-        self.vector_service = VectorService(settings.QDRANT_NOTES_COLLECTION)
-        self.llm = GroqChatProvider()
+    def __init__(self, embeddings=None, vector_service: VectorService | None = None, llm: GroqChatProvider | None = None) -> None:
+        self.embeddings = embeddings or create_embedding_provider()
+        self.vector_service = vector_service or create_vector_service(settings.QDRANT_NOTES_COLLECTION)
+        self.llm = llm or GroqChatProvider()
         self.prompt = PromptTemplate.from_template(
             "You are the MindMesh Notes Agent. Answer only from the retrieved notes context. "
             "If the context is insufficient, say no relevant notes were found.\n\n"
+            "Chat history summary:\n{chat_history_summary}\n\n"
             "Notes context:\n{context}\n\nQuestion: {question}\n\nAnswer with note source attribution."
         )
 
-    async def answer(self, user_id: uuid.UUID, query: str, limit: int = 5) -> AgentResult:
-        points = await self._retrieve(user_id, query, limit)
-        if not points or points[0].score < LOW_CONFIDENCE_THRESHOLD:
+    async def answer(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int = 5,
+        conversation_id: uuid.UUID | None = None,
+        chat_history_summary: str | None = None,
+    ) -> AgentResult:
+        retrieved = await self.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
+        if not retrieved.citations:
             return AgentResult("notes", "I could not find relevant notes for that question.", [], {"confidence": 0})
+        answer = await self.llm.complete(
+            [
+                {
+                    "role": "user",
+                    "content": self.prompt.format(
+                        chat_history_summary=chat_history_summary or "No previous chat history.",
+                        context=retrieved.context,
+                        question=query,
+                    ),
+                }
+            ]
+        )
+        return AgentResult("notes", answer, retrieved.citations, {"confidence": retrieved.confidence})
+
+    async def retrieve_context(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int = 5,
+        conversation_id: uuid.UUID | None = None,
+        chat_history_summary: str | None = None,
+    ) -> RetrievedContext:
+        retrieval_query = build_retrieval_query(query, chat_history_summary)
+        points = await self._retrieve(user_id, retrieval_query, limit, conversation_id)
         citations = [point_to_search_result(point, "note") for point in points]
         context = "\n\n".join(
-            f"[{idx + 1}] {item.title or item.source_id}: {item.snippet}" for idx, item in enumerate(citations)
+            f"[N{idx + 1}] {item.title or item.source_id}\n{item.snippet}" for idx, item in enumerate(citations)
         )
-        answer = await self.llm.complete([{"role": "user", "content": self.prompt.format(context=context, question=query)}])
-        return AgentResult("notes", answer, citations, {"confidence": points[0].score})
+        confidence = points[0].score if points else 0
+        return RetrievedContext("notes", context, citations, confidence)
 
-    async def _retrieve(self, user_id: uuid.UUID, query: str, limit: int):
+    async def _retrieve(self, user_id: uuid.UUID, query: str, limit: int, conversation_id: uuid.UUID | None):
+        models = get_qdrant_models()
         vector = (await self.embeddings.embed([query]))[0]
-        return await self.vector_service.search(
+        journal_points = await self.vector_service.search(
             vector,
             limit,
             models.Filter(
                 must=[
                     models.FieldCondition(key="user_id", match=models.MatchValue(value=str(user_id))),
-                    models.FieldCondition(key="source_type", match=models.MatchAny(any=["note", "journal"])),
+                    models.FieldCondition(key="source_type", match=models.MatchValue(value="journal")),
                 ]
             ),
         )
+        global_note_points = await self.vector_service.search(
+            vector,
+            limit,
+            models.Filter(
+                must=[
+                    models.FieldCondition(key="user_id", match=models.MatchValue(value=str(user_id))),
+                    models.FieldCondition(key="source_type", match=models.MatchValue(value="note")),
+                    models.FieldCondition(key="scope", match=models.MatchValue(value="global")),
+                ]
+            ),
+        )
+        chat_note_points = []
+        if conversation_id:
+            chat_note_points = await self.vector_service.search(
+                vector,
+                limit,
+                models.Filter(
+                    must=[
+                        models.FieldCondition(key="user_id", match=models.MatchValue(value=str(user_id))),
+                        models.FieldCondition(key="source_type", match=models.MatchValue(value="note")),
+                        models.FieldCondition(key="scope", match=models.MatchValue(value="chat")),
+                        models.FieldCondition(key="chat_id", match=models.MatchValue(value=str(conversation_id))),
+                    ]
+                ),
+            )
+        return sorted([*journal_points, *global_note_points, *chat_note_points], key=lambda point: point.score, reverse=True)[:limit]
 
 
 class DocumentsAgent:
     """RAG-only documents agent. It answers only from document chunks stored in Qdrant."""
 
-    def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
-        self.embeddings = FastEmbedProvider()
-        self.vector_service = VectorService(settings.QDRANT_DOCUMENTS_COLLECTION)
-        self.llm = GroqChatProvider(model=model or "llama-3.1-8b-instant", api_key=api_key)
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        embeddings=None,
+        vector_service: VectorService | None = None,
+        llm: GroqChatProvider | None = None,
+    ) -> None:
+        self.embeddings = embeddings or create_embedding_provider()
+        self.vector_service = vector_service or create_vector_service(settings.QDRANT_DOCUMENTS_COLLECTION)
+        self.llm = llm or GroqChatProvider(model=model or "llama-3.1-8b-instant", api_key=api_key)
         self.prompt = PromptTemplate.from_template(
             "You are the MindMesh Documents Agent. Answer only from retrieved document chunks. "
             "If the context is insufficient, say no relevant documents were found. "
             "Cite file names and MinIO object paths when available.\n\n"
+            "Chat history summary:\n{chat_history_summary}\n\n"
             "Document context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
         )
 
-    async def answer(self, user_id: uuid.UUID, query: str, limit: int = 5, conversation_id: uuid.UUID | None = None) -> AgentResult:
+    async def answer(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int = 5,
+        conversation_id: uuid.UUID | None = None,
+        chat_history_summary: str | None = None,
+    ) -> AgentResult:
+        retrieved = await self.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
+        if not retrieved.citations:
+            return AgentResult("documents", "I could not find relevant uploaded documents for that question.", [], {"confidence": 0})
+        answer = await self.llm.complete(
+            [
+                {
+                    "role": "user",
+                    "content": self.prompt.format(
+                        chat_history_summary=chat_history_summary or "No previous chat history.",
+                        context=retrieved.context,
+                        question=query,
+                    ),
+                }
+            ]
+        )
+        return AgentResult("documents", answer, retrieved.citations, {"confidence": retrieved.confidence})
+
+    async def retrieve_context(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int = 5,
+        conversation_id: uuid.UUID | None = None,
+        chat_history_summary: str | None = None,
+    ) -> RetrievedContext:
+        retrieval_query = build_retrieval_query(query, chat_history_summary)
+        points = await self.retrieve(user_id, retrieval_query, limit, conversation_id)
+        citations = [point_to_search_result(point, "document") for point in points]
+        context = "\n\n".join(
+            f"[D{idx + 1}] {item.title or item.source_id}\n{item.snippet}\nMinIO: {item.metadata.get('minio_object_path')}"
+            for idx, item in enumerate(citations)
+        )
+        confidence = points[0].score if points else 0
+        return RetrievedContext("documents", context, citations, confidence)
+
+    async def retrieve(self, user_id: uuid.UUID, query: str, limit: int = 5, conversation_id: uuid.UUID | None = None):
+        models = get_qdrant_models()
         vector = (await self.embeddings.embed([query]))[0]
         global_points = await self.vector_service.search(
             vector,
@@ -116,15 +292,66 @@ class DocumentsAgent:
                 ),
             )
         points = sorted([*global_points, *chat_points], key=lambda point: point.score, reverse=True)[:limit]
-        if not points or points[0].score < LOW_CONFIDENCE_THRESHOLD:
-            return AgentResult("documents", "I could not find relevant uploaded documents for that question.", [], {"confidence": 0})
-        citations = [point_to_search_result(point, "document") for point in points]
-        context = "\n\n".join(
-            f"[{idx + 1}] {item.title}: {item.snippet}\nMinIO: {item.metadata.get('minio_object_path')}"
-            for idx, item in enumerate(citations)
+        return points
+
+
+class WorkspaceAgent:
+    """RAG agent that considers both notes/journals and uploaded documents."""
+
+    def __init__(self, notes_agent: NotesAgent, documents_agent: DocumentsAgent, llm: GroqChatProvider) -> None:
+        self.notes_agent = notes_agent
+        self.documents_agent = documents_agent
+        self.llm = llm
+        self.prompt = PromptTemplate.from_template(
+            "You are MindMesh. Answer from the retrieved workspace context and chat history summary. "
+            "Use both notes and uploaded documents when relevant. If context is insufficient, say what is missing.\n\n"
+            "Chat history summary:\n{chat_history_summary}\n\n"
+            "Notes Agent context:\n{notes_context}\n\n"
+            "Documents Agent context:\n{documents_context}\n\n"
+            "Question: {question}\n\nAnswer with source attribution:"
         )
-        answer = await self.llm.complete([{"role": "user", "content": self.prompt.format(context=context, question=query)}])
-        return AgentResult("documents", answer, citations, {"confidence": points[0].score})
+
+    async def answer(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int = 5,
+        conversation_id: uuid.UUID | None = None,
+        chat_history_summary: str | None = None,
+    ) -> AgentResult:
+        notes = await self.notes_agent.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
+        documents = await self.documents_agent.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
+        citations = [*notes.citations, *documents.citations]
+        confidence = max(notes.confidence, documents.confidence)
+        if not citations:
+            return AgentResult("workspace", "I could not find relevant notes or uploaded documents for that question.", [], {"confidence": 0})
+        answer = await self.llm.complete(
+            [
+                {
+                    "role": "user",
+                    "content": self.prompt.format(
+                        chat_history_summary=chat_history_summary or "No previous chat history.",
+                        notes_context=notes.context or "No relevant notes were retrieved.",
+                        documents_context=documents.context or "No relevant documents were retrieved.",
+                        question=query,
+                    ),
+                }
+            ]
+        )
+        return AgentResult(
+            "workspace",
+            answer,
+            citations,
+            {
+                "confidence": confidence,
+                "notes_context_count": len(notes.citations),
+                "documents_context_count": len(documents.citations),
+                "notes_confidence": notes.confidence,
+                "documents_confidence": documents.confidence,
+                "low_confidence": bool(citations and confidence < LOW_CONFIDENCE_THRESHOLD),
+                "chat_history_included": has_prior_chat_history(chat_history_summary),
+            },
+        )
 
 
 class WebSearchAgent:
@@ -184,28 +411,98 @@ class SupervisorAgent:
         self.documents_agent = DocumentsAgent(model=groq_model, api_key=groq_key)
         self.web_agent = WebSearchAgent(tavily_api_key)
         self.llm = GroqChatProvider(model=groq_model or "llama-3.1-8b-instant", api_key=groq_key)
+        self.workspace_agent = WorkspaceAgent(self.notes_agent, self.documents_agent, self.llm)
+        self.prompt = PromptTemplate.from_template(
+            "You are the MindMesh Supervisor Agent. Use the chat history summary, Notes Agent context, "
+            "and Documents Agent context to answer the current question. The agents already retrieved "
+            "chunks using both the current question and chat history, so treat their context as the "
+            "available workspace knowledge.\n\n"
+            "Rules:\n"
+            "- Prefer retrieved notes and documents over general knowledge.\n"
+            "- Use both sources when both are relevant.\n"
+            "- If the retrieved context is insufficient, say exactly what is missing.\n"
+            "- Cite source labels such as [N1] or [D1] when using retrieved context.\n\n"
+            "Chat history summary:\n{chat_history_summary}\n\n"
+            "Current question:\n{question}\n\n"
+            "Notes Agent context:\n{notes_context}\n\n"
+            "Documents Agent context:\n{documents_context}\n\n"
+            "Answer:"
+        )
 
-    async def answer(self, user_id: uuid.UUID, query: str, limit: int = 5, conversation_id: uuid.UUID | None = None) -> AgentResult:
+    async def answer(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int = 5,
+        conversation_id: uuid.UUID | None = None,
+        chat_history_summary: str | None = None,
+    ) -> AgentResult:
         route = self.route(query)
-        if route == "notes":
-            return await self.notes_agent.answer(user_id, query, limit)
-        if route == "documents":
-            return await self.documents_agent.answer(user_id, query, limit, conversation_id)
         if route == "web":
             return await self.web_agent.answer(query)
+        if route == "workspace":
+            return await self.answer_from_workspace_context(user_id, query, limit, conversation_id, chat_history_summary)
         return AgentResult("direct", await self.direct_answer(query), [], {})
 
     def route(self, query: str) -> str:
-        normalized = query.lower()
-        if re.search(r"\b(my notes|saved notes|notes?|ideas i wrote|personal knowledge)\b", normalized):
-            return "notes"
-        if re.search(r"\b(uploaded|file|files|pdf|document|documents|report|attachment|attachments)\b", normalized):
-            return "documents"
-        if re.search(r"\b(today|latest|current|news|online|web|internet|recent|now|2026|price|weather)\b", normalized):
+        normalized = query.lower().strip()
+        if re.search(r"\b(today|latest|news|online|web|internet|recent|now|2026|price|weather|current events)\b", normalized):
             return "web"
-        if re.search(r"\b(hi|hello|hey|thanks|help)\b", normalized):
+        if re.fullmatch(r"(hi|hello|hey|thanks|thank you|help)[.!?]*", normalized):
             return "direct"
-        return "notes"
+        return "workspace"
+
+    async def answer_from_workspace_context(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int,
+        conversation_id: uuid.UUID | None,
+        chat_history_summary: str | None,
+    ) -> AgentResult:
+        notes = await self.notes_agent.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
+        documents = await self.documents_agent.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
+        citations = [*notes.citations, *documents.citations]
+        confidence = max(notes.confidence, documents.confidence)
+        if not citations:
+            return AgentResult(
+                "workspace",
+                "I could not find relevant notes or uploaded documents for that question.",
+                [],
+                {
+                    "confidence": 0,
+                    "notes_context_count": 0,
+                    "documents_context_count": 0,
+                    "chat_history_included": has_prior_chat_history(chat_history_summary),
+                },
+            )
+        answer = await self.llm.complete(
+            [
+                {
+                    "role": "user",
+                    "content": self.prompt.format(
+                        chat_history_summary=chat_history_summary or "No previous chat history.",
+                        question=query,
+                        notes_context=notes.context or "No relevant notes were retrieved.",
+                        documents_context=documents.context or "No relevant documents were retrieved.",
+                    ),
+                }
+            ]
+        )
+        return AgentResult(
+            "workspace",
+            answer,
+            citations,
+            {
+                "confidence": confidence,
+                "notes_context_count": len(notes.citations),
+                "documents_context_count": len(documents.citations),
+                "notes_confidence": notes.confidence,
+                "documents_confidence": documents.confidence,
+                "low_confidence": bool(citations and confidence < LOW_CONFIDENCE_THRESHOLD),
+                "chat_history_included": has_prior_chat_history(chat_history_summary),
+            },
+        )
 
     async def direct_answer(self, query: str) -> str:
         if self.provider != "Groq":

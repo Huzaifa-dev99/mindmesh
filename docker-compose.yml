@@ -33,7 +33,7 @@ services:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - "D:/volumes/minio:/data"
+      - minio_data:/data
 
   backend:
     build: ./backend
@@ -68,7 +68,7 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
-      - "D:/volumes/minio:/minio-data"
+      - minio_data:/minio-data
 
   frontend:
     build: ./frontend
@@ -89,3 +89,4 @@ services:
 volumes:
   postgres_data:
   qdrant_data:
+  minio_data:

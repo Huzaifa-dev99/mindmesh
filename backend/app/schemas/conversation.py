@@ -13,6 +13,7 @@ class ConversationSummary(BaseModel):
     updated_at: datetime | None
     message_count: int = 0
     last_message_at: datetime | None = None
+    archived_at: datetime | None = None
 
 
 class ConversationDetail(ConversationSummary):

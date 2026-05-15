@@ -21,6 +21,8 @@ export type Note = {
   source?: string | null;
   tags: string[];
   metadata?: Record<string, unknown>;
+  scope: "chat" | "global";
+  chat_id?: string | null;
   created_at: string;
   updated_at?: string | null;
 };
@@ -48,6 +50,7 @@ export type ConversationSummary = {
   updated_at?: string | null;
   message_count: number;
   last_message_at?: string | null;
+  archived_at?: string | null;
 };
 
 export type AIModel = {
@@ -83,7 +86,7 @@ export type DocumentResource = {
   chunk_count: number;
   scope: "chat" | "global";
   chat_id?: string | null;
-  status: "uploading" | "processing" | "indexing" | "ready" | "failed";
+  status: "uploaded" | "processing" | "indexing" | "indexed" | "ready" | "failed";
   requires_multimodal: boolean;
 };
 
