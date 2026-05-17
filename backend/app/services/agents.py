@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,9 @@ except ImportError:  # Keeps local Docker builds usable when LangChain is not in
 LOW_CONFIDENCE_THRESHOLD = 0.25
 MAX_HISTORY_SUMMARY_CHARS = 1800
 MAX_RETRIEVAL_QUERY_CHARS = 3000
+MAX_STANDALONE_QUERY_CHARS = 700
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -47,6 +51,14 @@ class RetrievedContext:
     context: str
     citations: list[SearchResult]
     confidence: float
+
+
+@dataclass
+class QueryRewriteResult:
+    original_query: str
+    query: str
+    rewritten: bool
+    strategy: str
 
 
 def create_embedding_provider():
@@ -99,6 +111,104 @@ def build_retrieval_query(query: str, chat_history_summary: str | None = None) -
 
 def has_prior_chat_history(chat_history_summary: str | None) -> bool:
     return bool(chat_history_summary and chat_history_summary.strip() != "No previous chat history.")
+
+
+def clean_rewritten_query(value: str, original_query: str) -> str:
+    cleaned = value.strip()
+    cleaned = re.sub(r"^```(?:text)?|```$", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = cleaned.strip("\"'` ")
+    cleaned = re.sub(
+        r"^(?:standalone(?: search)? query|rewritten(?: search)? query|query)\s*:\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    cleaned = " ".join(cleaned.split())
+    if not cleaned or "groq is not configured" in cleaned.lower():
+        return original_query.strip()
+    if len(cleaned) > MAX_STANDALONE_QUERY_CHARS:
+        cleaned = cleaned[:MAX_STANDALONE_QUERY_CHARS].rsplit(" ", 1)[0].strip()
+    return cleaned or original_query.strip()
+
+
+def last_user_turn_from_history(chat_history_summary: str | None) -> str:
+    if not has_prior_chat_history(chat_history_summary):
+        return ""
+    for line in reversed((chat_history_summary or "").splitlines()):
+        if line.lower().startswith("user:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def looks_contextual_follow_up(query: str) -> bool:
+    normalized = query.lower().strip()
+    if len(normalized.split()) <= 8:
+        return True
+    return bool(
+        re.search(
+            r"\b(it|this|that|these|those|they|them|their|he|she|his|her|there|same|previous|above|earlier|also)\b",
+            normalized,
+        )
+        or normalized.startswith(("what about", "how about", "and ", "also ", "then ", "why ", "when ", "where "))
+    )
+
+
+def build_fallback_standalone_query(query: str, chat_history_summary: str | None) -> str:
+    original_query = query.strip()
+    if not has_prior_chat_history(chat_history_summary) or not looks_contextual_follow_up(original_query):
+        return original_query
+    last_user_turn = last_user_turn_from_history(chat_history_summary)
+    if not last_user_turn:
+        return original_query
+    fallback = f"{last_user_turn} Follow-up question: {original_query}"
+    if len(fallback) > MAX_STANDALONE_QUERY_CHARS:
+        return fallback[-MAX_STANDALONE_QUERY_CHARS:].lstrip()
+    return fallback
+
+
+class QueryRewriter:
+    def __init__(self, llm: GroqChatProvider | None = None) -> None:
+        self.llm = llm or GroqChatProvider()
+        self.prompt = PromptTemplate.from_template(
+            "Rewrite the current user message as one standalone semantic search query.\n"
+            "Use the chat history to resolve pronouns, ellipses, and references such as "
+            "'it', 'that', 'they', 'the previous one', or 'what about'. Preserve names, dates, "
+            "constraints, and the user's intent. Do not answer the question. If the current "
+            "message is already standalone, return it unchanged. Return only the standalone query.\n\n"
+            "Chat history:\n{chat_history_summary}\n\n"
+            "Current user message:\n{query}\n\n"
+            "Standalone query:"
+        )
+
+    async def rewrite(self, query: str, chat_history_summary: str | None = None) -> QueryRewriteResult:
+        original_query = query.strip()
+        if not has_prior_chat_history(chat_history_summary):
+            return QueryRewriteResult(original_query, original_query, False, "none")
+
+        fallback_query = build_fallback_standalone_query(original_query, chat_history_summary)
+        try:
+            rewritten_query = await self.llm.complete(
+                [
+                    {
+                        "role": "user",
+                        "content": self.prompt.format(
+                            chat_history_summary=chat_history_summary,
+                            query=original_query,
+                        ),
+                    }
+                ],
+                temperature=0,
+            )
+            cleaned_query = clean_rewritten_query(rewritten_query, original_query)
+            if cleaned_query == original_query and fallback_query != original_query:
+                cleaned_query = fallback_query
+                strategy = "fallback"
+            else:
+                strategy = "llm" if cleaned_query != original_query else "unchanged"
+            return QueryRewriteResult(original_query, cleaned_query, cleaned_query != original_query, strategy)
+        except Exception:
+            logger.warning("query_rewrite_failed falling_back_to_heuristic", exc_info=True)
+            return QueryRewriteResult(original_query, fallback_query, fallback_query != original_query, "fallback")
 
 
 class NotesAgent:
@@ -411,6 +521,7 @@ class SupervisorAgent:
         self.documents_agent = DocumentsAgent(model=groq_model, api_key=groq_key)
         self.web_agent = WebSearchAgent(tavily_api_key)
         self.llm = GroqChatProvider(model=groq_model or "llama-3.1-8b-instant", api_key=groq_key)
+        self.query_rewriter = QueryRewriter(self.llm)
         self.workspace_agent = WorkspaceAgent(self.notes_agent, self.documents_agent, self.llm)
         self.prompt = PromptTemplate.from_template(
             "You are the MindMesh Supervisor Agent. Use the chat history summary, Notes Agent context, "
@@ -423,7 +534,8 @@ class SupervisorAgent:
             "- If the retrieved context is insufficient, say exactly what is missing.\n"
             "- Cite source labels such as [N1] or [D1] when using retrieved context.\n\n"
             "Chat history summary:\n{chat_history_summary}\n\n"
-            "Current question:\n{question}\n\n"
+            "Original user question:\n{original_question}\n\n"
+            "Standalone question used for retrieval:\n{question}\n\n"
             "Notes Agent context:\n{notes_context}\n\n"
             "Documents Agent context:\n{documents_context}\n\n"
             "Answer:"
@@ -437,12 +549,43 @@ class SupervisorAgent:
         conversation_id: uuid.UUID | None = None,
         chat_history_summary: str | None = None,
     ) -> AgentResult:
-        route = self.route(query)
+        rewrite_result = await self.rewrite_query(query, chat_history_summary)
+        route = self.route(rewrite_result.query)
         if route == "web":
-            return await self.web_agent.answer(query)
+            result = await self.web_agent.answer(rewrite_result.query)
+            return self.with_query_rewrite_metadata(result, rewrite_result)
         if route == "workspace":
-            return await self.answer_from_workspace_context(user_id, query, limit, conversation_id, chat_history_summary)
-        return AgentResult("direct", await self.direct_answer(query), [], {})
+            result = await self.answer_from_workspace_context(
+                user_id,
+                rewrite_result.query,
+                limit,
+                conversation_id,
+                chat_history_summary,
+                original_query=rewrite_result.original_query,
+                rewrite_result=rewrite_result,
+            )
+            return self.with_query_rewrite_metadata(result, rewrite_result)
+        return self.with_query_rewrite_metadata(
+            AgentResult("direct", await self.direct_answer(rewrite_result.original_query), [], {}),
+            rewrite_result,
+        )
+
+    async def rewrite_query(self, query: str, chat_history_summary: str | None) -> QueryRewriteResult:
+        rewriter = getattr(self, "query_rewriter", None)
+        if rewriter is None:
+            rewriter = QueryRewriter(getattr(self, "llm", None))
+            self.query_rewriter = rewriter
+        return await rewriter.rewrite(query, chat_history_summary)
+
+    def with_query_rewrite_metadata(self, result: AgentResult, rewrite_result: QueryRewriteResult) -> AgentResult:
+        result.metadata = {
+            **result.metadata,
+            "original_query": rewrite_result.original_query,
+            "rewritten_query": rewrite_result.query,
+            "query_rewritten": rewrite_result.rewritten,
+            "query_rewrite_strategy": rewrite_result.strategy,
+        }
+        return result
 
     def route(self, query: str) -> str:
         normalized = query.lower().strip()
@@ -459,6 +602,8 @@ class SupervisorAgent:
         limit: int,
         conversation_id: uuid.UUID | None,
         chat_history_summary: str | None,
+        original_query: str | None = None,
+        rewrite_result: QueryRewriteResult | None = None,
     ) -> AgentResult:
         notes = await self.notes_agent.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
         documents = await self.documents_agent.retrieve_context(user_id, query, limit, conversation_id, chat_history_summary)
@@ -482,6 +627,7 @@ class SupervisorAgent:
                     "role": "user",
                     "content": self.prompt.format(
                         chat_history_summary=chat_history_summary or "No previous chat history.",
+                        original_question=original_query or query,
                         question=query,
                         notes_context=notes.context or "No relevant notes were retrieved.",
                         documents_context=documents.context or "No relevant documents were retrieved.",

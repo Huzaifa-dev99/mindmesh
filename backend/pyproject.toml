@@ -20,6 +20,7 @@ dependencies = [
     "pydantic-settings",
     "email-validator",
     "qdrant-client",
+    "minio",
     "fastembed",
     "httpx",
     "python-multipart",

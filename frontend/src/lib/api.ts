@@ -1,11 +1,29 @@
 import type { AIModel, AIProviderConfig, ConversationDetail, ConversationSummary, DocumentResource, Journal, Note, SearchResult, User } from "../types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+export const AUTH_EXPIRED_EVENT = "mindmesh:auth-expired";
 
 type LoginResponse = {
   access_token: string;
   user: User;
 };
+
+export class ApiError extends Error {
+  status: number;
+  payload: unknown;
+
+  constructor(message: string, status: number, payload: unknown = null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.payload = payload;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
+export function isUnauthorizedError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 401;
+}
 
 async function request<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   const headers: Record<string, string> = {
@@ -22,7 +40,11 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.detail || response.statusText);
+    const message = payload?.detail || response.statusText;
+    if (token && response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } }));
+    }
+    throw new ApiError(message, response.status, payload);
   }
 
   if (response.status === 204) {

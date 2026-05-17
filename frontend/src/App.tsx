@@ -57,6 +57,12 @@ export function App() {
     };
   }, [state.authenticated]);
 
+  useEffect(() => {
+    if (!state.authenticated && sessionLocked) {
+      setSessionLocked(false);
+    }
+  }, [sessionLocked, state.authenticated]);
+
   function lockWorkspace() {
     localStorage.setItem(LOCK_KEY, "true");
     setSessionLocked(true);

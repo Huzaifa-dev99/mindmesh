@@ -7,9 +7,13 @@ for database connections, API keys, and other settings.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic import computed_field, field_validator
+from pydantic import AliasChoices, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -20,7 +24,11 @@ class Settings(BaseSettings):
     with sensible defaults where appropriate.
     """
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(REPO_ROOT / ".env", BACKEND_ROOT / ".env", ".env"),
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     PROJECT_NAME: str = "MindMesh Backend"
     VERSION: str = "0.1.0"
@@ -47,8 +55,8 @@ class Settings(BaseSettings):
     # Optional tools and object storage
     TAVILY_API_KEY: str = ""
     MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "mindmesh"
-    MINIO_SECRET_KEY: str = "mindmesh-password"
+    MINIO_ACCESS_KEY: str = Field("minioadmin", validation_alias=AliasChoices("MINIO_ACCESS_KEY", "MINIO_USER"))
+    MINIO_SECRET_KEY: str = Field("minioadmin", validation_alias=AliasChoices("MINIO_SECRET_KEY", "MINIO_PASSWORD"))
     MINIO_BUCKET: str = "mindmesh-documents"
     MINIO_SECURE: bool = False
     MINIO_DATA_PATH: str = ".mindmesh-data/minio"

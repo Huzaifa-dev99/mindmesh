@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.core.config import settings
 from app.db.qdrant import check_qdrant_connection
 from app.db.session import check_db_connection
+from app.services.document_storage import check_minio_connection
 
 router = APIRouter()
 
@@ -29,12 +30,14 @@ async def full_health_check():
     """Comprehensive health check including all dependencies."""
     database = await check_db_connection()
     qdrant = check_qdrant_connection()
+    minio = check_minio_connection()
     return {
-        "status": "healthy" if database and qdrant else "degraded",
+        "status": "healthy" if database and qdrant and minio else "degraded",
         "version": settings.VERSION,
         "checks": {
             "database": database,
             "qdrant": qdrant,
+            "minio": minio,
             "groq_api_configured": bool(settings.GROQ_API_KEY),
         }
     }

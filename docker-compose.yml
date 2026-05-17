@@ -27,8 +27,8 @@ services:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-mindmesh}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-mindmesh-password}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-${MINIO_USER:-minioadmin}}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-${MINIO_PASSWORD:-minioadmin}}
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -51,8 +51,8 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-mindmesh}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-mindmesh-password}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-${MINIO_USER:-minioadmin}}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-${MINIO_PASSWORD:-minioadmin}}
       MINIO_BUCKET: ${MINIO_BUCKET:-mindmesh-documents}
       MINIO_SECURE: "false"
       MINIO_DATA_PATH: /minio-data

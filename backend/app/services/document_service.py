@@ -8,13 +8,15 @@ from qdrant_client.http import models
 
 from app.ai.embeddings.chunking import chunk_text
 from app.core.config import settings
+from app.services.document_storage import create_document_storage
 from app.services.vector_service import VectorService
 
 
 class DocumentService:
-    def __init__(self, vector_service=None, embedding_provider=None) -> None:
+    def __init__(self, vector_service=None, embedding_provider=None, storage=None) -> None:
         self.vector_service = vector_service or VectorService(settings.QDRANT_DOCUMENTS_COLLECTION)
         self._embedding_provider = embedding_provider
+        self.storage = storage or create_document_storage()
 
     @property
     def embedding_provider(self):
@@ -46,9 +48,7 @@ class DocumentService:
         document_id = uuid.uuid4()
         safe_name = Path(file_name or f"{document_id}.txt").name
         object_path = f"{settings.MINIO_BUCKET}/{user_id}/{document_id}/{safe_name}"
-        target = Path(settings.MINIO_DATA_PATH) / object_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(raw_bytes)
+        self.storage.save_bytes(object_path, raw_bytes, file_type)
 
         is_image = file_type.startswith("image/") or Path(safe_name).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
         requires_multimodal = is_image and not selected_model_supports_vision
@@ -145,9 +145,7 @@ class DocumentService:
         document = next((item for item in documents if str(item["document_id"]) == str(document_id)), None)
         await self.vector_service.delete_source(user_id, "document", document_id)
         if document and document.get("minio_object_path"):
-            target = Path(settings.MINIO_DATA_PATH) / document["minio_object_path"]
-            if target.exists():
-                target.unlink()
+            self.storage.delete(document["minio_object_path"])
 
     async def update_scope(self, user_id: uuid.UUID, document_id: uuid.UUID, scope: str, chat_id: uuid.UUID | None) -> dict:
         normalized_scope = "chat" if scope == "chat" else "global"

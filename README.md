@@ -31,14 +31,22 @@ MindMesh is a self-hosted AI knowledge workspace for private notes, documents, s
 - Optional: a Groq API key for live AI responses
 - Optional: Tavily API key for web search
 
-## Quick Start With Docker
+## Quick Start: Local-First Dependencies
 
 ```bash
 git clone <your-repo-url>
 cd mindmesh
 cp .env.example .env
-docker compose up --build
+.\scripts\start-local.ps1
 ```
+
+The local-first script checks the endpoints in `.env` first:
+
+- PostgreSQL from `DATABASE_URL`, or `POSTGRES_HOST`/`POSTGRES_PORT`
+- Qdrant from `QDRANT_URL`
+- MinIO from `MINIO_ENDPOINT` and `MINIO_SECURE`
+
+If all three are already running, it starts the backend and frontend against those services without creating new dependency containers. If one is missing, it starts only the missing dependency service with Docker Compose, then points the app at the working local endpoint.
 
 Open:
 
@@ -49,6 +57,26 @@ Open:
 - MinIO console: http://localhost:9001
 
 On first launch, MindMesh asks you to create a workspace PIN. The frontend then creates or logs into the local bootstrap user configured by `SINGLE_USER_EMAIL` and `SINGLE_USER_PASSWORD`.
+
+If you want to check dependency detection without starting anything:
+
+```powershell
+.\scripts\start-local.ps1 -CheckOnly
+```
+
+To prepare only Postgres/Qdrant/MinIO and run the app yourself:
+
+```powershell
+.\scripts\start-local.ps1 -DepsOnly
+```
+
+## Full Docker Compose Start
+
+Use this when you want Compose to own the entire stack from scratch:
+
+```bash
+docker compose up --build
+```
 
 ## Required Environment Variables
 
@@ -65,13 +93,26 @@ Common operational settings:
 - `CORS_ORIGINS`: comma-separated allowed frontend origins
 - `DEBUG`: set to `false` outside local development
 - `TAVILY_API_KEY`: optional web search integration
+- `DATABASE_URL`: host-reachable PostgreSQL URL when connecting to an existing local container
+- `QDRANT_URL`: host-reachable Qdrant URL when connecting to an existing local container
+- `MINIO_ENDPOINT`: host-reachable MinIO endpoint such as `localhost:9000`
+- `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`: MinIO credentials. Existing `.env` files using `MINIO_USER` and `MINIO_PASSWORD` are also supported.
 - `QDRANT_NOTES_COLLECTION` and `QDRANT_DOCUMENTS_COLLECTION`: vector collection names
 - `WORKSPACE_PIN`: optional preconfigured workspace PIN; otherwise the first user creates one locally
 
 ## Common Commands
 
 ```bash
-# Start or rebuild the full stack
+# Prefer already-running Postgres/Qdrant/MinIO, starting missing dependencies only
+.\scripts\start-local.ps1
+
+# Check dependency detection only
+.\scripts\start-local.ps1 -CheckOnly
+
+# Prepare dependencies only
+.\scripts\start-local.ps1 -DepsOnly
+
+# Start or rebuild the full Compose-owned stack
 docker compose up --build
 
 # Start in the background
