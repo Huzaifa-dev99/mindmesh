@@ -34,7 +34,7 @@ MindMesh is a self-hosted AI knowledge workspace for private notes, documents, s
 ## Quick Start: Local-First Dependencies
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Huzaifa-dev99/mindmesh.git
 cd mindmesh
 cp .env.example .env
 .\scripts\start-local.ps1
@@ -205,19 +205,10 @@ npm run build
 ## Production Notes
 
 - Run behind HTTPS and a real reverse proxy for public deployments.
-- Use strong secrets in `.env`; never commit `.env`.
 - Restrict `CORS_ORIGINS` to trusted domains.
 - Keep Docker volumes backed up: PostgreSQL, Qdrant, and MinIO data contain the user knowledge base.
 - The current generation path uses the Groq-compatible chat provider. Model discovery supports additional providers, but adding generation adapters for non-Groq providers is a future extension.
 - For very large documents or high upload volume, move indexing to a background worker queue.
-
-## Troubleshooting
-
-- Frontend loads but API calls fail: confirm `backend` is healthy with `docker compose ps` and check `docker compose logs backend`.
-- AI answers say Groq is not configured: add `GROQ_API_KEY` to `.env` or save a Groq key in Settings > AI.
-- Document upload succeeds but retrieval is weak: confirm the document has indexable text. Scanned PDFs and image-only documents need OCR or a vision-capable model workflow.
-- Port already in use: change `POSTGRES_PORT`, `QDRANT_HTTP_PORT`, `MINIO_API_PORT`, or service port mappings in `.env`/`docker-compose.yml`.
-- Need a clean reset: run `docker compose down -v`, then `docker compose up --build`.
 
 ## Contributing
 
