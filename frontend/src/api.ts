@@ -48,6 +48,15 @@ export const api = {
     }),
   dashboard: () => request("/dashboard"),
   sessions: () => request("/chat/sessions"),
+  updateSession: (sessionId: string, payload: unknown) =>
+    request(`/chat/sessions/${sessionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deleteSession: (sessionId: string) =>
+    request(`/chat/sessions/${sessionId}`, {
+      method: "DELETE"
+    }),
   interactions: (sessionId: string) => request(`/chat/sessions/${sessionId}/interactions`),
   documents: () => request("/documents"),
   syncDocuments: () => request("/documents/sync", { method: "POST" }),

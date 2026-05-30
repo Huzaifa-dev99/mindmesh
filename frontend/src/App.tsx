@@ -7,12 +7,14 @@ import {
   Bot,
   Brain,
   CheckCircle2,
+  Check,
   ChevronDown,
   Clock3,
   Command,
   Database,
   FileText,
   Gauge,
+  Globe2,
   History,
   Home,
   KeyRound,
@@ -22,8 +24,7 @@ import {
   Menu,
   MessageSquare,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
+  Palette,
   Plus,
   RefreshCw,
   Search,
@@ -38,12 +39,13 @@ import {
   TerminalSquare,
   Trash2,
   UploadCloud,
+  UserRound,
   X
 } from "lucide-react";
 import type * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -91,18 +93,45 @@ type PromptItem = {
   body: string;
 };
 
-const navItems = [
-  { path: "/dashboard", label: "Overview", icon: Home, group: "Workspace" },
-  { path: "/documents", label: "Documents", icon: FileText, group: "Workspace" },
-  { path: "/chat", label: "Ask MindMesh", icon: MessageSquare, group: "Workspace" },
-  { path: "/admin/prompts", label: "Prompt library", icon: TerminalSquare, group: "Build" },
-  { path: "/admin", label: "Model settings", icon: Settings, group: "Build" },
-  { path: "/api-connection", label: "Connections", icon: KeyRound, group: "System" }
+type UserProfile = {
+  name: string;
+  avatar_url: string;
+  bio: string;
+  nicknames: string[];
+  highlight_color: "mist" | "sage" | "lavender";
+};
+
+type WorkspaceContextValue = {
+  attachedDocumentIds: string[];
+  profile: UserProfile;
+  setProfile: (profile: UserProfile) => void;
+  toggleDocument: (documentId: string) => void;
+};
+
+const pageLabels: Record<string, string> = {
+  "/dashboard": "Dashboard",
+  "/documents": "Document library",
+  "/chat": "New chat",
+  "/profile": "Profile",
+  "/admin/prompts": "Prompt library",
+  "/admin": "Model settings",
+  "/api-connection": "API connections",
+  "/personalization": "Personalization"
+};
+
+const settingsLinks = [
+  { path: "/profile", label: "Profile", description: "Name, avatar, and response context", icon: UserRound },
+  { path: "/admin/prompts", label: "Prompt library", description: "Review and version system prompts", icon: TerminalSquare },
+  { path: "/admin", label: "Model settings", description: "Providers, models, and API keys", icon: Settings },
+  { path: "/api-connection", label: "API connections", description: "Run service health checks", icon: KeyRound },
+  { path: "/personalization", label: "Personalization", description: "Choose a gentle interface highlight", icon: Palette }
 ];
 
 const palette = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 
 type Theme = "light" | "dark";
+
+const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -159,6 +188,45 @@ function matchesSearch(values: Array<string | number | undefined>, query: string
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
   return values.some((value) => String(value || "").toLowerCase().includes(normalized));
+}
+
+function normalizeProfile(raw: any): UserProfile {
+  return {
+    name: raw?.name || "Local user",
+    avatar_url: raw?.avatar_url || raw?.avatar || "",
+    bio: raw?.bio || "",
+    nicknames: Array.isArray(raw?.nicknames) ? raw.nicknames : [],
+    highlight_color: ["mist", "sage", "lavender"].includes(raw?.highlight_color) ? raw.highlight_color : "mist"
+  };
+}
+
+function readStoredDocumentIds() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem("mindmesh-attached-documents") || "[]");
+    return Array.isArray(value) ? value.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function useWorkspace() {
+  const workspace = useContext(WorkspaceContext);
+  if (!workspace) throw new Error("Workspace context is unavailable.");
+  return workspace;
+}
+
+function sessionGroup(value?: string) {
+  if (!value) return "Earlier";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Earlier";
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfSession = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startOfToday.getTime() - startOfSession.getTime()) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return "Previous 7 days";
+  return "Earlier";
 }
 
 function formatTimestamp(value?: string) {
@@ -245,14 +313,16 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<GuardedShell />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<Navigate to="/chat" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/chat" element={<ChatPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/admin/prompts" element={<PromptLibraryPage />} />
           <Route path="/api-connection" element={<ApiConnectionPage />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/personalization" element={<PersonalizationPage />} />
+          <Route path="*" element={<Navigate to="/chat" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>
@@ -262,14 +332,14 @@ function App() {
 function GuardedShell() {
   const [checking, setChecking] = useState(true);
   const [locked, setLocked] = useState(false);
-  const [profile, setProfile] = useState({ name: "Workspace Admin", avatar_url: "" });
+  const [profile, setProfile] = useState<UserProfile>(normalizeProfile({}));
 
   useEffect(() => {
     api
       .user()
       .then((user: any) => {
         const nextProfile = user.profile || user;
-        setProfile({ name: nextProfile.name || "Workspace Admin", avatar_url: nextProfile.avatar_url || nextProfile.avatar || "" });
+        setProfile(normalizeProfile(nextProfile));
         setLocked(Boolean(user.has_pin));
       })
       .catch(() => setLocked(false))
@@ -358,10 +428,11 @@ function LockScreen({ onUnlock }: { onUnlock: () => void }) {
   );
 }
 
-function AppShell({ profile }: { profile: { name: string; avatar_url?: string } }) {
+function AppShell({ profile: initialProfile }: { profile: UserProfile }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"online" | "offline" | "warn">("warn");
+  const [profile, setProfile] = useState(initialProfile);
+  const [attachedDocumentIds, setAttachedDocumentIds] = useState<string[]>(readStoredDocumentIds);
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
 
@@ -376,64 +447,130 @@ function AppShell({ profile }: { profile: { name: string; avatar_url?: string } 
       .catch(() => setConnectionStatus("offline"));
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.accent = profile.highlight_color;
+  }, [profile.highlight_color]);
+
+  useEffect(() => {
+    window.localStorage.setItem("mindmesh-attached-documents", JSON.stringify(attachedDocumentIds));
+  }, [attachedDocumentIds]);
+
+  const workspace = useMemo<WorkspaceContextValue>(
+    () => ({
+      attachedDocumentIds,
+      profile,
+      setProfile,
+      toggleDocument: (documentId) =>
+        setAttachedDocumentIds((current) =>
+          current.includes(documentId) ? current.filter((id) => id !== documentId) : [...current, documentId]
+        )
+    }),
+    [attachedDocumentIds, profile]
+  );
+
   return (
-    <div className="theme-scope app-shell min-h-screen text-slate-100">
-      <div className="ambient-backdrop pointer-events-none fixed inset-0" />
-      <Sidebar collapsed={collapsed} open={sidebarOpen} onClose={() => setSidebarOpen(false)} connectionStatus={connectionStatus} />
-      <div className={cn("relative transition-all duration-300", collapsed ? "lg:pl-[88px]" : "lg:pl-[248px]")}>
-        <TopBar
-          profile={profile}
-          collapsed={collapsed}
-          onMenu={() => setSidebarOpen(true)}
-          onToggleCollapse={() => setCollapsed((value) => !value)}
-          onToggleTheme={toggleTheme}
-          theme={theme}
-        />
-        <main className="mx-auto max-w-[1540px] px-4 pb-12 pt-6 sm:px-6 lg:px-8 lg:pt-8">
-          <AnimatePresence initial={false} mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18 }}
-            >
-              <Routes>
-                <Route index element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/documents" element={<DocumentsPage />} />
-                <Route path="/chat" element={<ChatPage />} />
-                <Route path="/admin" element={<AdminPage />} />
-                <Route path="/admin/prompts" element={<PromptLibraryPage />} />
-                <Route path="/api-connection" element={<ApiConnectionPage />} />
-              </Routes>
-            </motion.div>
-          </AnimatePresence>
-        </main>
+    <WorkspaceContext.Provider value={workspace}>
+      <div className="theme-scope app-shell min-h-screen text-slate-100">
+        <div className="ambient-backdrop pointer-events-none fixed inset-0" />
+        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} connectionStatus={connectionStatus} />
+        <div className="relative min-w-0 lg:pl-[296px]">
+          <TopBar onMenu={() => setSidebarOpen(true)} onToggleTheme={toggleTheme} theme={theme} />
+          <main
+            className={cn(
+              "relative min-w-0 px-4 pb-6 pt-4 sm:px-6 lg:px-8 lg:pt-6",
+              location.pathname === "/chat" ? "mx-auto max-w-[1680px]" : "mx-auto max-w-[1540px]"
+            )}
+          >
+            <AnimatePresence initial={false} mode="wait">
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.16 }}
+              >
+                <Routes>
+                  <Route index element={<Navigate to="/chat" replace />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/documents" element={<DocumentsPage />} />
+                  <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/profile" element={<ProfilePage />} />
+                  <Route path="/admin" element={<AdminPage />} />
+                  <Route path="/admin/prompts" element={<PromptLibraryPage />} />
+                  <Route path="/api-connection" element={<ApiConnectionPage />} />
+                  <Route path="/personalization" element={<PersonalizationPage />} />
+                </Routes>
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
       </div>
-    </div>
+    </WorkspaceContext.Provider>
   );
 }
 
 function Sidebar({
-  collapsed,
   open,
   onClose,
   connectionStatus
 }: {
-  collapsed: boolean;
   open: boolean;
   onClose: () => void;
   connectionStatus: "online" | "offline" | "warn";
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const workspace = useWorkspace();
+  const [activeTab, setActiveTab] = useState<"documents" | "chats">("documents");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [openActions, setOpenActions] = useState("");
+  const documentsState = useAsyncData<DocumentItem[]>(
+    async () => {
+      const response: any = await api.documents();
+      const documents = Array.isArray(response) ? response : response.documents || [];
+      return documents.map(toDocumentItem);
+    },
+    []
+  );
+  const sessionsState = useAsyncData<any[]>(
+    async () => {
+      const response: any = await api.sessions();
+      return Array.isArray(response) ? response : response.sessions || [];
+    },
+    []
+  );
+
+  const indexedDocuments = documentsState.data.filter((document) => document.status === "indexed");
+  const visibleSessions = sessionsState.data.filter((session) => Boolean(session.archived) === showArchived);
+  const groupedSessions = useMemo(
+    () =>
+      visibleSessions.reduce<Record<string, any[]>>((groups, session) => {
+        const group = sessionGroup(session.updated_at || session.updatedAt);
+        groups[group] = [...(groups[group] || []), session];
+        return groups;
+      }, {}),
+    [visibleSessions]
+  );
+
+  const startNewChat = () => {
+    navigate(`/chat?new=${Date.now()}`);
+    onClose();
+  };
+
+  const updateSession = async (sessionId: string, payload: unknown) => {
+    await api.updateSession(sessionId, payload);
+    setOpenActions("");
+    sessionsState.reload();
+  };
+
   return (
     <>
       <AnimatePresence>
         {open ? (
           <motion.button
-            aria-label="Close sidebar"
-            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+            aria-label="Close workspace rail"
+            className="fixed inset-0 z-40 bg-black/50 lg:hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -443,204 +580,350 @@ function Sidebar({
       </AnimatePresence>
       <aside
         className={cn(
-          "sidebar-shell fixed inset-y-0 left-0 z-50 flex flex-col border-r border-white/8 p-3 backdrop-blur-xl transition-all duration-300",
-          collapsed ? "w-[88px]" : "w-[248px]",
+          "sidebar-shell fixed inset-y-0 left-0 z-50 flex w-[296px] flex-col border-r border-white/8 p-3 backdrop-blur-xl transition-transform duration-300",
           open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
-        <div className={cn("mb-7 flex items-center px-1 pt-1", collapsed ? "justify-center" : "justify-between")}>
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between px-1 py-1">
+          <button className="focus-ring flex items-center gap-3 rounded-xl text-left" onClick={() => navigate("/chat")}>
             <BrandMark />
-            {!collapsed ? (
-              <div>
-                <p className="text-base font-semibold tracking-tight text-white">MindMesh</p>
-                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Knowledge OS</p>
-              </div>
-            ) : null}
-          </div>
+            <div>
+              <p className="text-base font-semibold tracking-tight text-white">MindMesh</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Knowledge workspace</p>
+            </div>
+          </button>
           <button className="focus-ring rounded-xl p-2 text-slate-400 hover:bg-white/5 hover:text-white lg:hidden" onClick={onClose}>
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <nav aria-label="Primary navigation" className="space-y-5">
-          {["Workspace", "Build", "System"].map((group) => (
-            <div key={group}>
-              {!collapsed ? <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">{group}</p> : null}
-              <div className="space-y-1">
-                {navItems.filter((item) => item.group === group).map((item) => (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    end={item.path === "/admin"}
-                    className={({ isActive }) =>
-                      cn(
-                        "focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
-                        collapsed && "justify-center",
-                        isActive
-                          ? "active-nav bg-cyan-300/12 text-cyan-100"
-                          : "text-slate-400 hover:bg-white/[0.055] hover:text-white"
-                      )
-                    }
-                    title={collapsed ? item.label : undefined}
-                  >
-                    <item.icon className="h-4 w-4 shrink-0" />
-                    {!collapsed ? <span>{item.label}</span> : null}
-                  </NavLink>
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-
-        <div className="mt-auto space-y-3">
+        <div className="mt-5 grid gap-2">
           <button
-            className={cn("focus-ring w-full rounded-2xl border border-white/8 bg-white/[0.025] p-3 text-left transition hover:bg-white/[0.055]", collapsed && "px-2 text-center")}
-            onClick={() => navigate("/api-connection")}
+            className={cn(
+              "focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition",
+              location.pathname === "/dashboard" ? "active-nav" : "text-slate-400 hover:bg-white/[0.055] hover:text-white"
+            )}
+            onClick={() => {
+              navigate("/dashboard");
+              onClose();
+            }}
           >
-            <div className={cn("mb-3 flex items-center gap-2", collapsed && "justify-center")}>
-              <StatusIndicator status={connectionStatus} />
-              {!collapsed ? <span className="text-xs font-semibold capitalize text-slate-300">Services {connectionStatus}</span> : null}
-            </div>
-            {!collapsed ? (
-              <>
-                <p className="text-xs leading-5 text-slate-500">API, database, vectors, and storage checks.</p>
-                <div className="mt-3 h-1.5 rounded-full bg-white/10">
-                  <div
-                    className={cn(
-                      "h-full rounded-full",
-                      connectionStatus === "online" && "w-full bg-emerald-300",
-                      connectionStatus === "warn" && "w-1/2 bg-amber-300",
-                      connectionStatus === "offline" && "w-1/4 bg-rose-300"
-                    )}
-                  />
-                </div>
-              </>
-            ) : null}
+            <Home className="h-4 w-4" />
+            Dashboard
           </button>
+          <Button className="w-full" onClick={startNewChat}>
+            <Plus className="h-4 w-4" />
+            New chat
+          </Button>
+        </div>
+
+        <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/8 bg-white/[0.025]">
+          <div className="grid grid-cols-2 border-b border-white/8 p-1">
+            {(["documents", "chats"] as const).map((tab) => (
+              <button
+                key={tab}
+                className={cn(
+                  "focus-ring rounded-lg px-2 py-2 text-xs font-semibold capitalize transition",
+                  activeTab === tab ? "tab-active" : "text-slate-500 hover:bg-white/5 hover:text-white"
+                )}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            {activeTab === "documents" ? (
+              <WorkspaceDocuments
+                documents={indexedDocuments}
+                loading={documentsState.loading}
+                attachedDocumentIds={workspace.attachedDocumentIds}
+                onToggle={workspace.toggleDocument}
+                onOpenLibrary={() => {
+                  navigate("/documents");
+                  onClose();
+                }}
+              />
+            ) : (
+              <WorkspaceSessions
+                groups={groupedSessions}
+                loading={sessionsState.loading}
+                openActions={openActions}
+                showArchived={showArchived}
+                onOpenActions={setOpenActions}
+                onOpenSession={(sessionId) => {
+                  navigate(`/chat?session=${sessionId}`);
+                  onClose();
+                }}
+                onRename={async (session) => {
+                  const title = window.prompt("Rename chat", session.title || "");
+                  if (title?.trim()) await updateSession(String(session.id), { title: title.trim() });
+                }}
+                onArchive={(session) => updateSession(String(session.id), { archived: !Boolean(session.archived) })}
+                onDelete={async (session) => {
+                  if (!window.confirm(`Delete "${session.title || "this chat"}"? This cannot be undone.`)) return;
+                  await api.deleteSession(String(session.id));
+                  setOpenActions("");
+                  sessionsState.reload();
+                }}
+                onToggleArchived={() => setShowArchived((current) => !current)}
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="relative mt-3">
+          <button
+            aria-expanded={profileOpen}
+            className="focus-ring flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.025] p-3 text-left transition hover:bg-white/[0.055]"
+            onClick={() => setProfileOpen((current) => !current)}
+          >
+            <ProfileAvatar profile={workspace.profile} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-white">{workspace.profile.name}</p>
+              <p className="mt-0.5 flex items-center gap-1.5 text-xs capitalize text-slate-500">
+                <StatusIndicator status={connectionStatus} />
+                Services {connectionStatus}
+              </p>
+            </div>
+            <ChevronDown className={cn("h-4 w-4 text-slate-500 transition", profileOpen && "rotate-180")} />
+          </button>
+          {profileOpen ? (
+            <SettingsMenu
+              className="absolute bottom-[72px] left-0 right-0"
+              onNavigate={(path) => {
+                setProfileOpen(false);
+                navigate(path);
+                onClose();
+              }}
+            />
+          ) : null}
         </div>
       </aside>
     </>
   );
 }
 
+function WorkspaceDocuments({
+  documents,
+  loading,
+  attachedDocumentIds,
+  onToggle,
+  onOpenLibrary
+}: {
+  documents: DocumentItem[];
+  loading: boolean;
+  attachedDocumentIds: string[];
+  onToggle: (documentId: string) => void;
+  onOpenLibrary: () => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 px-1 py-2">
+        <div>
+          <p className="text-xs font-semibold text-slate-300">Query sources</p>
+          <p className="mt-1 text-[11px] leading-4 text-slate-500">Attach indexed documents to narrow answers.</p>
+        </div>
+        <button className="focus-ring rounded-lg px-2 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-white/5" onClick={onOpenLibrary}>
+          Manage
+        </button>
+      </div>
+      <div className="mt-1 space-y-1">
+        {loading ? [0, 1, 2].map((item) => <div key={item} className="loading-shimmer h-12 rounded-xl" />) : null}
+        {!loading && !documents.length ? <p className="px-2 py-6 text-center text-xs leading-5 text-slate-500">Index documents to attach them to chat.</p> : null}
+        {documents.map((document) => {
+          const attached = attachedDocumentIds.includes(document.id);
+          return (
+            <button
+              key={document.id}
+              aria-pressed={attached}
+              className={cn(
+                "focus-ring flex w-full items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition",
+                attached ? "border-cyan-300/40 bg-cyan-300/10" : "border-transparent hover:border-white/8 hover:bg-white/[0.045]"
+              )}
+              onClick={() => onToggle(document.id)}
+            >
+              <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-lg", attached ? "bg-cyan-300 text-slate-950" : "bg-white/[0.055] text-slate-400")}>
+                {attached ? <Check className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold text-slate-300">{document.filename}</span>
+                <span className="mt-0.5 block text-[11px] text-slate-500">{document.chunks} indexed chunks</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceSessions({
+  groups,
+  loading,
+  openActions,
+  showArchived,
+  onOpenActions,
+  onOpenSession,
+  onRename,
+  onArchive,
+  onDelete,
+  onToggleArchived
+}: {
+  groups: Record<string, any[]>;
+  loading: boolean;
+  openActions: string;
+  showArchived: boolean;
+  onOpenActions: (sessionId: string) => void;
+  onOpenSession: (sessionId: string) => void;
+  onRename: (session: any) => void;
+  onArchive: (session: any) => void;
+  onDelete: (session: any) => void;
+  onToggleArchived: () => void;
+}) {
+  const orderedGroups = ["Today", "Yesterday", "Previous 7 days", "Earlier"];
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 px-1 py-2">
+        <div>
+          <p className="text-xs font-semibold text-slate-300">{showArchived ? "Archived chats" : "Recent chats"}</p>
+          <p className="mt-1 text-[11px] leading-4 text-slate-500">Resume or organize conversations.</p>
+        </div>
+        <button className="focus-ring rounded-lg px-2 py-1 text-[11px] font-semibold text-cyan-200 hover:bg-white/5" onClick={onToggleArchived}>
+          {showArchived ? "Recent" : "Archive"}
+        </button>
+      </div>
+      {loading ? [0, 1, 2].map((item) => <div key={item} className="loading-shimmer mb-1 h-12 rounded-xl" />) : null}
+      {!loading && !Object.keys(groups).length ? <p className="px-2 py-6 text-center text-xs leading-5 text-slate-500">No {showArchived ? "archived" : "recent"} chats yet.</p> : null}
+      {orderedGroups.map((group) =>
+        groups[group]?.length ? (
+          <div className="mt-3" key={group}>
+            <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{group}</p>
+            <div className="mt-1 space-y-0.5">
+              {groups[group].map((session) => (
+                <div className="relative" key={session.id}>
+                  <button
+                    className="focus-ring w-full rounded-xl px-2.5 py-2 pr-9 text-left transition hover:bg-white/[0.055]"
+                    onClick={() => onOpenSession(String(session.id))}
+                  >
+                    <span className="block truncate text-xs font-semibold text-slate-300">{session.title || "Untitled chat"}</span>
+                    <span className="mt-0.5 block text-[11px] text-slate-500">{session.interaction_count || 0} messages</span>
+                  </button>
+                  <button
+                    aria-label={`Open actions for ${session.title || "chat"}`}
+                    className="focus-ring absolute right-1 top-2 rounded-lg p-1.5 text-slate-500 hover:bg-white/8 hover:text-white"
+                    onClick={() => onOpenActions(openActions === String(session.id) ? "" : String(session.id))}
+                  >
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                  </button>
+                  {openActions === String(session.id) ? (
+                    <div className="menu-surface absolute right-0 top-9 z-20 w-36 rounded-xl border border-white/10 p-1 shadow-xl">
+                      <button className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-300 hover:bg-white/8" onClick={() => onRename(session)}>Rename</button>
+                      <button className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-300 hover:bg-white/8" onClick={() => onArchive(session)}>
+                        {session.archived ? "Restore" : "Archive"}
+                      </button>
+                      <button className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-rose-200 hover:bg-rose-400/10" onClick={() => onDelete(session)}>Delete</button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null
+      )}
+    </div>
+  );
+}
+
+function SettingsMenu({ className = "", onNavigate }: { className?: string; onNavigate: (path: string) => void }) {
+  return (
+    <div className={cn("menu-surface z-40 rounded-2xl border border-white/10 p-2 shadow-2xl", className)}>
+      <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Workspace settings</p>
+      {settingsLinks.map((item) => (
+        <button
+          key={item.path}
+          className="focus-ring flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition hover:bg-white/8"
+          onClick={() => onNavigate(item.path)}
+        >
+          <span className="accent-icon grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-cyan-300/10 text-cyan-200">
+            <item.icon className="h-4 w-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold text-slate-300">{item.label}</span>
+            <span className="mt-0.5 block truncate text-[11px] text-slate-500">{item.description}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProfileAvatar({ profile, className = "" }: { profile: UserProfile; className?: string }) {
+  return (
+    <div className={cn("grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl bg-cyan-300 text-sm font-bold text-slate-950", className)}>
+      {profile.avatar_url ? <img className="h-full w-full object-cover" src={profile.avatar_url} alt="" /> : profile.name.slice(0, 1)}
+    </div>
+  );
+}
+
 function TopBar({
-  profile,
-  collapsed,
   onMenu,
-  onToggleCollapse,
   onToggleTheme,
   theme
 }: {
-  profile: { name: string; avatar_url?: string };
-  collapsed: boolean;
   onMenu: () => void;
-  onToggleCollapse: () => void;
   onToggleTheme: () => void;
   theme: Theme;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("q") || "");
-  const [profileOpen, setProfileOpen] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const currentPage = navItems.find((item) => item.path === location.pathname)?.label || "Workspace";
-
-  useEffect(() => {
-    setQuery(searchParams.get("q") || "");
-  }, [searchParams]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        searchRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  const submitSearch = () => {
-    const next = query.trim();
-    const searchablePath = location.pathname === "/admin/prompts" || location.pathname === "/chat" ? location.pathname : "/documents";
-    navigate(next ? `${searchablePath}?q=${encodeURIComponent(next)}` : searchablePath);
-  };
+  const workspace = useWorkspace();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const currentPage = pageLabels[location.pathname] || "Workspace";
 
   return (
     <header className="topbar-shell sticky top-0 z-30 border-b border-white/8 backdrop-blur-xl">
-      <div className="mx-auto flex h-[68px] max-w-[1540px] items-center gap-3 px-4 sm:px-6 lg:px-8">
-        <button aria-label="Open navigation" className="focus-ring rounded-xl p-2 text-slate-300 hover:bg-white/6 hover:text-white lg:hidden" onClick={onMenu}>
+      <div className="flex h-[64px] items-center gap-3 px-4 sm:px-6 lg:px-8">
+        <button aria-label="Open workspace rail" className="focus-ring rounded-xl p-2 text-slate-300 hover:bg-white/6 hover:text-white lg:hidden" onClick={onMenu}>
           <Menu className="h-5 w-5" />
         </button>
-        <button
-          className="focus-ring hidden rounded-xl p-2 text-slate-400 hover:bg-white/6 hover:text-white lg:inline-flex"
-          onClick={onToggleCollapse}
-          aria-label="Toggle sidebar"
-        >
-          {collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
-        </button>
-        <p className="hidden shrink-0 text-sm font-semibold text-slate-300 xl:block">{currentPage}</p>
-        <div className="relative mx-auto min-w-0 max-w-2xl flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <input
-            ref={searchRef}
-            aria-label="Search workspace"
-            className="focus-ring h-10 w-full rounded-xl border border-white/10 bg-white/[0.035] pl-10 pr-24 text-sm text-white placeholder:text-slate-500 transition hover:border-white/20"
-            placeholder="Search your workspace"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              const next = new URLSearchParams(searchParams);
-              if (event.target.value.trim()) next.set("q", event.target.value);
-              else next.delete("q");
-              setSearchParams(next, { replace: true });
-            }}
-            onKeyDown={(event) => event.key === "Enter" && submitSearch()}
-          />
-          <div className="shortcut-hint pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2 py-1 text-[11px] text-slate-500 sm:flex">
-            <Command className="h-3 w-3" /> K
-          </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-300">{currentPage}</p>
+          {location.pathname === "/chat" ? (
+            <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">
+              {workspace.attachedDocumentIds.length ? `${workspace.attachedDocumentIds.length} document${workspace.attachedDocumentIds.length === 1 ? "" : "s"} attached` : "Ask across your indexed knowledge"}
+            </p>
+          ) : null}
         </div>
-        <button
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-400 transition hover:border-white/20 hover:bg-white/[0.075] hover:text-white"
-          onClick={onToggleTheme}
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </button>
-        <Button variant="secondary" className="topbar-index-action" onClick={() => navigate("/documents?intent=index")}>
-          <Sparkles className="h-4 w-4" />
-          New Index
-        </Button>
-        <div className="relative">
-        <button
-          aria-label="Open account menu"
-          aria-expanded={profileOpen}
-          className="focus-ring flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.035] px-2 py-1.5 transition hover:bg-white/[0.06]"
-          onClick={() => setProfileOpen((value) => !value)}
-        >
-          <div className="grid h-8 w-8 place-items-center overflow-hidden rounded-lg bg-cyan-300 text-sm font-bold text-slate-950">
-            {profile.avatar_url ? <img className="h-full w-full object-cover" src={profile.avatar_url} alt="" /> : profile.name.slice(0, 1)}
-          </div>
-          <div className="hidden leading-tight md:block">
-            <p className="text-sm font-medium text-white">{profile.name}</p>
-            <p className="text-xs text-slate-500">Admin</p>
-          </div>
-          <ChevronDown className="hidden h-4 w-4 text-slate-500 md:block" />
-        </button>
-        {profileOpen ? (
-          <div className="menu-surface absolute right-0 top-12 z-40 w-56 rounded-xl border border-white/10 p-2 shadow-2xl">
-            <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/8" onClick={() => { setProfileOpen(false); navigate("/admin"); }}>
-              Admin settings
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-400 transition hover:border-white/20 hover:bg-white/[0.075] hover:text-white"
+            onClick={onToggleTheme}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+          <div className="relative">
+            <button
+              aria-expanded={settingsOpen}
+              aria-label="Open workspace settings"
+              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-400 transition hover:border-white/20 hover:bg-white/[0.075] hover:text-white"
+              onClick={() => setSettingsOpen((current) => !current)}
+            >
+              <Settings className="h-4 w-4" />
             </button>
-            <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/8" onClick={() => { setProfileOpen(false); navigate("/api-connection"); }}>
-              API connection
-            </button>
+            {settingsOpen ? (
+              <SettingsMenu
+                className="absolute right-0 top-12 w-72"
+                onNavigate={(path) => {
+                  setSettingsOpen(false);
+                  navigate(path);
+                }}
+              />
+            ) : null}
           </div>
-        ) : null}
         </div>
       </div>
     </header>
@@ -868,9 +1151,11 @@ function DocumentsPage() {
     setUploading(true);
     setNotice("");
     const form = new FormData();
-    files.forEach((file) => form.append("files", file));
-    form.append("tags", tags);
-    form.append("owner", owner);
+    files.forEach((file) => {
+      form.append("files", file);
+      form.append("filenames", file.name);
+      form.append("tags", tags);
+    });
     try {
       await api.uploadDocuments(form);
       setFiles([]);
@@ -1081,25 +1366,16 @@ function DocumentsPage() {
 
 function ChatPage() {
   const [searchParams] = useSearchParams();
+  const workspace = useWorkspace();
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeSession, setActiveSession] = useState("");
   const [input, setInput] = useState("");
   const [topK, setTopK] = useState(6);
   const [threshold, setThreshold] = useState(0.72);
   const [sourceMode, setSourceMode] = useState("balanced");
-  const [mobilePanel, setMobilePanel] = useState<"history" | "settings" | "">("");
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const sessionsState = useAsyncData<any[]>(
-    async () => {
-      const response: any = await api.sessions();
-      return Array.isArray(response) ? response : response.sessions || [];
-    },
-    []
-  );
-  const query = searchParams.get("q") || "";
-  const sessions = sessionsState.data.filter((session) =>
-    matchesSearch([session.title, session.name, session.query, session.id, session.session_id], query)
-  );
 
   const newChat = () => {
     setActiveSession("");
@@ -1133,6 +1409,15 @@ function ChatPage() {
     }
   };
 
+  useEffect(() => {
+    if (searchParams.get("new")) {
+      newChat();
+      return;
+    }
+    const sessionId = searchParams.get("session");
+    if (sessionId && sessionId !== activeSession) loadSession({ id: sessionId });
+  }, [searchParams]);
+
   const sendMessage = async () => {
     const question = input.trim();
     if (!question) return;
@@ -1145,7 +1430,9 @@ function ChatPage() {
         top_k: topK,
         score_threshold: threshold,
         route_mode: sourceMode,
-        session_id: activeSession || undefined
+        session_id: activeSession || undefined,
+        document_ids: workspace.attachedDocumentIds,
+        web_search_enabled: webSearchEnabled
       });
       if (response.session_id) setActiveSession(response.session_id);
       setMessages((current) => [
@@ -1178,71 +1465,54 @@ function ChatPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2 2xl:hidden">
-        <Button variant="secondary" className="min-w-0 flex-1" onClick={() => setMobilePanel((current) => current === "history" ? "" : "history")}>
-          <History className="h-4 w-4" />
-          History
-        </Button>
-        <Button variant="secondary" className="min-w-0 flex-1" onClick={() => setMobilePanel((current) => current === "settings" ? "" : "settings")}>
-          <SlidersHorizontal className="h-4 w-4" />
-          Settings
-        </Button>
-        <Button size="icon" ariaLabel="Start a new chat" onClick={newChat}>
-          <Plus className="h-4 w-4" />
-        </Button>
-      </div>
-      {mobilePanel === "history" ? (
-        <Card className="2xl:hidden">
-          <div className="mb-4 flex items-center justify-between">
-            <SectionTitle icon={History} title="Chat history" subtitle="Resume an earlier conversation" />
-            <Button size="icon" variant="secondary" ariaLabel="Start a new chat" onClick={newChat}>
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-          <SessionList sessions={sessions} activeSession={activeSession} onLoad={loadSession} />
-        </Card>
-      ) : null}
-      {mobilePanel === "settings" ? (
-        <Card className="2xl:hidden">
-          <SectionTitle icon={SlidersHorizontal} title="Retrieval settings" subtitle="Tune source selection for this chat" />
-          <RetrievalControls
-            topK={topK}
-            threshold={threshold}
-            sourceMode={sourceMode}
-            onTopK={setTopK}
-            onThreshold={setThreshold}
-            onSourceMode={setSourceMode}
-          />
-        </Card>
-      ) : null}
-      <div className="grid min-h-[calc(100vh-140px)] gap-4 2xl:grid-cols-[248px_minmax(0,1fr)_304px]">
-      <Card className="hidden 2xl:block">
-        <div className="mb-5 flex items-center justify-between">
-          <SectionTitle icon={History} title="Chat history" />
-          <Button size="icon" variant="secondary" ariaLabel="New chat" onClick={newChat}>
-            <Plus className="h-4 w-4" />
-          </Button>
-        </div>
-        <SessionList sessions={sessions} activeSession={activeSession} onLoad={loadSession} />
-      </Card>
-      <Card className="min-w-0 flex min-h-[680px] flex-col overflow-hidden p-0">
+    <div className="relative">
+      <Card className="chat-stage relative flex min-h-[calc(100vh-104px)] min-w-0 max-w-full flex-col overflow-hidden p-0">
         <div className="border-b border-white/10 p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <SectionTitle icon={Bot} title="AI chat workspace" subtitle="Grounded answers with visible retrieval provenance" />
-            <Badge tone="success">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Provenance on
-            </Badge>
+            <SectionTitle icon={Bot} title="Ask MindMesh" subtitle="Grounded answers from your documents and optional web search" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="success">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Provenance on
+              </Badge>
+              <Button variant="secondary" onClick={() => setSettingsOpen((current) => !current)}>
+                <SlidersHorizontal className="h-4 w-4" />
+                Retrieval
+              </Button>
+            </div>
           </div>
         </div>
+        {settingsOpen ? (
+          <div className="chat-settings-panel absolute right-4 top-[86px] z-20 w-[min(320px,calc(100%-32px))] rounded-2xl border border-white/10 p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <SectionTitle icon={SlidersHorizontal} title="Retrieval settings" subtitle="Tune source selection for this chat" />
+              <button aria-label="Close retrieval settings" className="focus-ring rounded-lg p-1.5 text-slate-500 hover:bg-white/8 hover:text-white" onClick={() => setSettingsOpen(false)}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <RetrievalControls
+              topK={topK}
+              threshold={threshold}
+              sourceMode={sourceMode}
+              onTopK={setTopK}
+              onThreshold={setThreshold}
+              onSourceMode={setSourceMode}
+            />
+          </div>
+        ) : null}
         <div className="flex-1 space-y-5 overflow-y-auto px-4 py-6 sm:px-6">
           {messages.length === 0 ? (
-            <EmptyState
-              icon={Sparkles}
-              title="Start with a question"
-              description="Ask about policies, decisions, research notes, contracts, or any indexed knowledge."
-            />
+            <div className="grid min-h-[420px] place-items-center py-10">
+              <div className="max-w-xl text-center">
+                <div className="accent-icon mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200">
+                  <Sparkles className="h-6 w-6" />
+                </div>
+                <h1 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-white sm:text-2xl">What would you like to explore?</h1>
+                <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-400">
+                  Ask a question across your indexed knowledge. Attach specific documents from the left rail when you want a narrower answer.
+                </p>
+              </div>
+            </div>
           ) : (
             messages.map((message) => <ChatBubble key={message.id} message={message} />)
           )}
@@ -1254,7 +1524,25 @@ function ChatPage() {
           ) : null}
         </div>
         <div className="composer-footer border-t border-white/10 p-4">
-          <div className="mb-3 flex flex-wrap gap-2">
+          {workspace.attachedDocumentIds.length ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500">Attached sources</span>
+              {workspace.attachedDocumentIds.slice(0, 3).map((documentId) => (
+                <button
+                  key={documentId}
+                  className="tag-chip focus-ring inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-cyan-300/10 bg-cyan-300/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-100"
+                  onClick={() => workspace.toggleDocument(documentId)}
+                  title="Detach document"
+                >
+                  <FileText className="h-3 w-3" />
+                  <span className="truncate">{documentId.split("/").pop()}</span>
+                  <X className="h-3 w-3" />
+                </button>
+              ))}
+              {workspace.attachedDocumentIds.length > 3 ? <span className="text-xs text-slate-500">+{workspace.attachedDocumentIds.length - 3} more</span> : null}
+            </div>
+          ) : null}
+          {messages.length === 0 ? <div className="mb-3 flex flex-wrap gap-2">
             {["Summarize the latest roadmap risks", "Which documents mention API limits?", "Show sources for onboarding claims"].map(
               (suggestion) => (
                 <button
@@ -1266,22 +1554,17 @@ function ChatPage() {
                 </button>
               )
             )}
-          </div>
-          <ChatComposer value={input} onChange={setInput} onSubmit={sendMessage} loading={loading} />
+          </div> : null}
+          <ChatComposer
+            value={input}
+            onChange={setInput}
+            onSubmit={sendMessage}
+            loading={loading}
+            webSearchEnabled={webSearchEnabled}
+            onToggleWebSearch={() => setWebSearchEnabled((current) => !current)}
+          />
         </div>
       </Card>
-      <Card className="hidden 2xl:block">
-        <SectionTitle icon={SlidersHorizontal} title="Retrieval settings" subtitle="Tune source selection for this chat" />
-        <RetrievalControls
-          topK={topK}
-          threshold={threshold}
-          sourceMode={sourceMode}
-          onTopK={setTopK}
-          onThreshold={setThreshold}
-          onSourceMode={setSourceMode}
-        />
-      </Card>
-      </div>
     </div>
   );
 }
@@ -1350,6 +1633,170 @@ function RetrievalControls({
           Responses expose retrieved chunks, source confidence, and document origin for inspection.
         </p>
       </div>
+    </div>
+  );
+}
+
+function ProfilePage() {
+  const workspace = useWorkspace();
+  const [name, setName] = useState(workspace.profile.name);
+  const [avatar, setAvatar] = useState(workspace.profile.avatar_url);
+  const [bio, setBio] = useState(workspace.profile.bio);
+  const [nicknames, setNicknames] = useState(workspace.profile.nicknames.join(", "));
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setName(workspace.profile.name);
+    setAvatar(workspace.profile.avatar_url);
+    setBio(workspace.profile.bio);
+    setNicknames(workspace.profile.nicknames.join(", "));
+  }, [workspace.profile]);
+
+  const saveProfile = async () => {
+    setSaving(true);
+    setNotice("");
+    try {
+      const response: any = await api.updateUserProfile({
+        name,
+        avatar,
+        bio,
+        nicknames: nicknames.split(",").map((nickname) => nickname.trim()).filter(Boolean),
+        highlight_color: workspace.profile.highlight_color
+      });
+      workspace.setProfile(normalizeProfile(response.profile || response));
+      setNotice("Profile saved.");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Unable to save profile.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Workspace identity"
+        title="Profile"
+        description="Keep the local workspace recognizable and add lightweight context for personalized responses."
+        actions={
+          <Button onClick={saveProfile} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Save profile
+          </Button>
+        }
+      />
+      {notice ? <InlineNotice tone={notice.includes("Unable") || notice.includes("cannot") ? "warn" : "success"} message={notice} /> : null}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <Card>
+          <SectionTitle icon={UserRound} title="Profile details" subtitle="Used throughout this local workspace" />
+          <div className="mt-6 grid gap-4">
+            <Input label="Display name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Local user" />
+            <Input label="Avatar URL" value={avatar} onChange={(event) => setAvatar(event.target.value)} placeholder="https://..." />
+            <Textarea
+              label="Bio"
+              className="font-sans"
+              rows={4}
+              value={bio}
+              onChange={(event) => setBio(event.target.value)}
+              placeholder="A short description of your role, preferences, or working style."
+            />
+            <Input
+              label="Nicknames"
+              value={nicknames}
+              onChange={(event) => setNicknames(event.target.value)}
+              placeholder="Comma-separated names"
+            />
+            <p className="text-xs leading-5 text-slate-500">Bio and nicknames are stored with your local profile so future personalized prompt flows can use them.</p>
+          </div>
+        </Card>
+        <Card>
+          <SectionTitle icon={Sparkles} title="Preview" subtitle="How you appear in the workspace" />
+          <div className="mt-7 flex flex-col items-center rounded-2xl border border-white/10 bg-white/[0.025] px-5 py-7 text-center">
+            <ProfileAvatar profile={{ ...workspace.profile, name, avatar_url: avatar }} className="h-16 w-16 text-lg" />
+            <h2 className="mt-4 text-lg font-semibold text-white">{name || "Local user"}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-400">{bio || "Add a short bio to make this workspace feel like yours."}</p>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function PersonalizationPage() {
+  const workspace = useWorkspace();
+  const [highlight, setHighlight] = useState<UserProfile["highlight_color"]>(workspace.profile.highlight_color);
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const options: Array<{ id: UserProfile["highlight_color"]; label: string; description: string; swatch: string }> = [
+    { id: "mist", label: "Mist", description: "A quiet blue-gray for focused work.", swatch: "#83adbd" },
+    { id: "sage", label: "Sage", description: "A measured green with a softer presence.", swatch: "#7eac99" },
+    { id: "lavender", label: "Lavender", description: "A restrained violet with gentle warmth.", swatch: "#a79cc0" }
+  ];
+
+  useEffect(() => setHighlight(workspace.profile.highlight_color), [workspace.profile.highlight_color]);
+
+  const saveHighlight = async () => {
+    setSaving(true);
+    setNotice("");
+    try {
+      const response: any = await api.updateUserProfile({
+        name: workspace.profile.name,
+        avatar: workspace.profile.avatar_url,
+        bio: workspace.profile.bio,
+        nicknames: workspace.profile.nicknames,
+        highlight_color: highlight
+      });
+      workspace.setProfile(normalizeProfile(response.profile || response));
+      setNotice("Interface highlight saved.");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Unable to save interface highlight.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Personalization"
+        title="Interface highlight"
+        description="Choose a calm accent that helps primary controls stand out without making the workspace louder."
+        actions={
+          <Button onClick={saveHighlight} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Save preference
+          </Button>
+        }
+      />
+      {notice ? <InlineNotice tone={notice.includes("Unable") ? "warn" : "success"} message={notice} /> : null}
+      <Card>
+        <SectionTitle icon={Palette} title="Highlight color" subtitle="Applied consistently in light and dark mode" />
+        <div className="mt-6 grid gap-3 lg:grid-cols-3">
+          {options.map((option) => {
+            const active = option.id === highlight;
+            return (
+              <button
+                key={option.id}
+                className={cn(
+                  "focus-ring rounded-2xl border p-4 text-left transition",
+                  active ? "accent-choice-active border-cyan-300/40 bg-cyan-300/[0.09]" : "border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.05]"
+                )}
+                onClick={() => setHighlight(option.id)}
+              >
+                <span className="flex items-center justify-between gap-3">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/10" style={{ background: option.swatch }}>
+                    {active ? <Check className="h-4 w-4 text-slate-950" /> : null}
+                  </span>
+                  {active ? <Badge tone="success">Selected</Badge> : null}
+                </span>
+                <span className="mt-5 block font-semibold text-white">{option.label}</span>
+                <span className="mt-2 block text-sm leading-6 text-slate-400">{option.description}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -1766,12 +2213,12 @@ function Select({ label, children, ...props }: React.SelectHTMLAttributes<HTMLSe
   );
 }
 
-function Textarea({ label, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string }) {
+function Textarea({ label, className = "", ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string }) {
   return (
     <label className="block">
       <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
       <textarea
-        className="field-control focus-ring w-full resize-y rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-sm leading-6 text-white placeholder:text-slate-500 transition hover:border-white/20"
+        className={cn("field-control focus-ring w-full resize-y rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-sm leading-6 text-white placeholder:text-slate-500 transition hover:border-white/20", className)}
         {...props}
       />
     </label>
@@ -2020,31 +2467,51 @@ function ChatComposer({
   value,
   onChange,
   onSubmit,
-  loading
+  loading,
+  webSearchEnabled,
+  onToggleWebSearch
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   loading: boolean;
+  webSearchEnabled: boolean;
+  onToggleWebSearch: () => void;
 }) {
   return (
-    <div className="chat-composer flex items-end gap-3 rounded-2xl border border-white/10 bg-black/25 p-2">
-      <textarea
-        aria-label="Ask MindMesh"
-        className="focus-ring max-h-36 min-h-12 flex-1 resize-none rounded-xl bg-transparent px-3 py-3 text-sm leading-6 text-white placeholder:text-slate-500"
-        placeholder="Ask across your indexed knowledge..."
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            onSubmit();
-          }
-        }}
-      />
-      <Button size="icon" ariaLabel="Send message" onClick={onSubmit} disabled={loading || !value.trim()}>
-        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-      </Button>
+    <div className="chat-composer min-w-0 rounded-2xl border border-white/10 bg-black/25 p-2">
+      <div className="flex items-end gap-2">
+        <textarea
+          aria-label="Ask MindMesh"
+          className="focus-ring max-h-36 min-h-12 min-w-0 flex-1 resize-none rounded-xl bg-transparent px-3 py-3 text-sm leading-6 text-white placeholder:text-slate-500"
+          placeholder="Ask across your indexed knowledge..."
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+        <Button size="icon" ariaLabel="Send message" onClick={onSubmit} disabled={loading || !value.trim()}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+        </Button>
+      </div>
+      <div className="mt-1 flex min-w-0 items-center justify-between gap-2 border-t border-white/8 px-2 pt-2">
+        <button
+          aria-pressed={webSearchEnabled}
+          className={cn(
+            "focus-ring inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold transition",
+            webSearchEnabled ? "bg-cyan-300/10 text-cyan-100" : "text-slate-500 hover:bg-white/5 hover:text-white"
+          )}
+          onClick={onToggleWebSearch}
+        >
+          <Globe2 className="h-3.5 w-3.5" />
+          Web search {webSearchEnabled ? "on" : "off"}
+        </button>
+        <p className="hidden text-right text-[11px] text-slate-500 sm:block">Enter to send | Shift + Enter for a new line</p>
+      </div>
     </div>
   );
 }

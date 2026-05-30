@@ -5,6 +5,7 @@ import re
 import secrets
 
 from psycopg import Connection
+from psycopg.types.json import Jsonb
 
 from app.core.database import connect, ensure_database
 from app.core.logging import get_logger, trace
@@ -15,6 +16,9 @@ logger = get_logger(__name__)
 DEFAULT_PROFILE = {
     "name": "Local user",
     "avatar": "https://api.dicebear.com/9.x/shapes/svg?seed=mindmesh&backgroundColor=16091f",
+    "bio": "",
+    "nicknames": [],
+    "highlight_color": "mist",
 }
 PIN_ITERATIONS = 210000
 PIN_PATTERN = re.compile(r"^\d{4}$")
@@ -46,6 +50,9 @@ def _row_to_state(row: dict) -> dict:
         "profile": {
             "name": row["name"],
             "avatar": row["avatar_url"],
+            "bio": row.get("bio") or "",
+            "nicknames": row.get("nicknames") or [],
+            "highlight_color": row.get("highlight_color") or "mist",
         },
         "has_pin": bool(row.get("pin_hash")),
         "created_at": serialize_datetime(row.get("created_at")),
@@ -138,14 +145,32 @@ def verify_user_pin(pin: str) -> dict:
     return _row_to_state(row)
 
 
-def update_user_profile(*, name: str, avatar: str) -> dict:
+def update_user_profile(
+    *,
+    name: str,
+    avatar: str,
+    bio: str = "",
+    nicknames: list[str] | None = None,
+    highlight_color: str = "mist",
+) -> dict:
     trace("User profile update started", logger)
     cleaned_name = str(name or "").strip()
     cleaned_avatar = str(avatar or "").strip()
+    cleaned_bio = str(bio or "").strip()
+    cleaned_nicknames = list(
+        dict.fromkeys(
+            str(nickname).strip()
+            for nickname in (nicknames or [])
+            if str(nickname).strip()
+        )
+    )
+    cleaned_highlight = str(highlight_color or "mist").strip().lower()
     if not cleaned_name:
         raise ValueError("Name cannot be empty.")
     if not cleaned_avatar:
         raise ValueError("Avatar URL cannot be empty.")
+    if cleaned_highlight not in {"mist", "sage", "lavender"}:
+        raise ValueError("Highlight color must be mist, sage, or lavender.")
 
     seed_user()
     with connect() as conn:
@@ -155,11 +180,20 @@ def update_user_profile(*, name: str, avatar: str) -> dict:
                 UPDATE rag.users
                 SET name = %s,
                     avatar_url = %s,
+                    bio = %s,
+                    nicknames = %s,
+                    highlight_color = %s,
                     updated_at = NOW()
                 WHERE id = TRUE
                 RETURNING *
                 """,
-                (cleaned_name, cleaned_avatar),
+                (
+                    cleaned_name,
+                    cleaned_avatar,
+                    cleaned_bio,
+                    Jsonb(cleaned_nicknames),
+                    cleaned_highlight,
+                ),
             )
             state = _row_to_state(cursor.fetchone())
         conn.commit()

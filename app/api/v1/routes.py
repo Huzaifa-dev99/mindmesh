@@ -6,6 +6,7 @@ from app.api.v1.schemas import (
     AIModelsResponse,
     AISettingsUpdateRequest,
     ChatInteractionsResponse,
+    ChatSessionUpdateRequest,
     ChatSessionsResponse,
     DashboardResponse,
     DocumentActionResponse,
@@ -35,7 +36,7 @@ from app.core.config import (
 from app.core.logging import get_logger, trace
 from app.core.storage import SUPPORTED_DOCUMENT_EXTENSIONS
 from app.services.document_registry import list_documents
-from app.services.chat_history import list_interactions, list_sessions
+from app.services.chat_history import delete_session, list_interactions, list_sessions, update_session
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -66,7 +67,13 @@ def update_user_profile_endpoint(request: UserProfileRequest) -> UserStateRespon
         from app.services.users import update_user_profile
 
         return UserStateResponse(
-            **update_user_profile(name=request.name, avatar=request.avatar)
+            **update_user_profile(
+                name=request.name,
+                avatar=request.avatar,
+                bio=request.bio,
+                nicknames=request.nicknames,
+                highlight_color=request.highlight_color,
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -432,6 +439,28 @@ def remove_documents_endpoint(request: DocumentIdsRequest) -> DocumentActionResp
 def chat_sessions_endpoint() -> ChatSessionsResponse:
     trace("Chat sessions requested", logger)
     return ChatSessionsResponse(sessions=list_sessions())
+
+
+@router.patch("/chat/sessions/{session_id}", response_model=ChatSessionsResponse)
+def update_chat_session_endpoint(
+    session_id: str,
+    request: ChatSessionUpdateRequest,
+) -> ChatSessionsResponse:
+    trace("Chat session update requested", logger)
+    try:
+        update_session(session_id, title=request.title, archived=request.archived)
+        return ChatSessionsResponse(sessions=list_sessions())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/chat/sessions/{session_id}", status_code=204)
+def delete_chat_session_endpoint(session_id: str) -> None:
+    trace("Chat session deletion requested", logger)
+    try:
+        delete_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(
