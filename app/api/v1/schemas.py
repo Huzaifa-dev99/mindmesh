@@ -8,6 +8,26 @@ class HealthResponse(BaseModel):
     service: str
 
 
+class UserProfileRequest(BaseModel):
+    name: str = Field(min_length=1)
+    avatar: str = Field(min_length=1)
+
+
+class UserPinRequest(BaseModel):
+    pin: str = Field(min_length=4, max_length=4)
+
+
+class UserStateResponse(BaseModel):
+    profile: dict[str, Any] = Field(default_factory=dict)
+    has_pin: bool = False
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class UserPinVerifyResponse(UserStateResponse):
+    unlocked: bool = True
+
+
 class IndexRequest(BaseModel):
     chunk_size: int | None = Field(default=None, ge=1)
     chunk_overlap: int | None = Field(default=None, ge=0)

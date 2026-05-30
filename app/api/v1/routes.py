@@ -20,6 +20,10 @@ from app.api.v1.schemas import (
     PromptResponse,
     PromptsResponse,
     PromptUpdateRequest,
+    UserPinRequest,
+    UserPinVerifyResponse,
+    UserProfileRequest,
+    UserStateResponse,
 )
 from app.core.config import (
     APP_NAME,
@@ -41,6 +45,76 @@ logger = get_logger(__name__)
 def health_check() -> HealthResponse:
     logger.debug("health check requested")
     return HealthResponse(status="ok", service=APP_NAME)
+
+
+@router.get("/user", response_model=UserStateResponse)
+def user_state_endpoint() -> UserStateResponse:
+    trace("User state requested", logger)
+    try:
+        from app.services.users import get_user_state
+
+        return UserStateResponse(**get_user_state())
+    except Exception as exc:
+        logger.exception("User state failed")
+        raise HTTPException(status_code=500, detail="User state failed") from exc
+
+
+@router.put("/user/profile", response_model=UserStateResponse)
+def update_user_profile_endpoint(request: UserProfileRequest) -> UserStateResponse:
+    trace("User profile update requested", logger)
+    try:
+        from app.services.users import update_user_profile
+
+        return UserStateResponse(
+            **update_user_profile(name=request.name, avatar=request.avatar)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("User profile update failed")
+        raise HTTPException(status_code=500, detail="User profile update failed") from exc
+
+
+@router.put("/user/pin", response_model=UserStateResponse)
+def set_user_pin_endpoint(request: UserPinRequest) -> UserStateResponse:
+    trace("User PIN set requested", logger)
+    try:
+        from app.services.users import set_user_pin
+
+        return UserStateResponse(**set_user_pin(request.pin))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("User PIN set failed")
+        raise HTTPException(status_code=500, detail="User PIN set failed") from exc
+
+
+@router.post("/user/pin/reset", response_model=UserStateResponse)
+def reset_user_pin_endpoint(request: UserPinRequest) -> UserStateResponse:
+    trace("User PIN reset requested", logger)
+    try:
+        from app.services.users import set_user_pin
+
+        return UserStateResponse(**set_user_pin(request.pin))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("User PIN reset failed")
+        raise HTTPException(status_code=500, detail="User PIN reset failed") from exc
+
+
+@router.post("/user/pin/verify", response_model=UserPinVerifyResponse)
+def verify_user_pin_endpoint(request: UserPinRequest) -> UserPinVerifyResponse:
+    trace("User PIN verification requested", logger)
+    try:
+        from app.services.users import verify_user_pin
+
+        return UserPinVerifyResponse(**verify_user_pin(request.pin), unlocked=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("User PIN verification failed")
+        raise HTTPException(status_code=500, detail="User PIN verification failed") from exc
 
 
 @router.get("/dashboard", response_model=DashboardResponse)

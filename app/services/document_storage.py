@@ -14,6 +14,7 @@ from app.core.storage import (
     document_content_type,
     document_extension,
     document_file_type,
+    ensure_bucket,
     list_document_objects,
     s3_client,
     s3_item_from_head,
@@ -145,6 +146,7 @@ def sync_storage_documents() -> list[dict]:
 def upload_documents(candidates: list[UploadCandidate]) -> UploadResult:
     trace(f"Document upload started for {len(candidates)} candidate(s)", logger)
     client = s3_client()
+    ensure_bucket(client, bucket=S3_BUCKET)
     uploaded = []
     skipped = []
 
@@ -224,6 +226,7 @@ def remove_documents_from_storage(document_ids: list[str]) -> int:
         return 0
 
     client = s3_client()
+    ensure_bucket(client, bucket=S3_BUCKET)
     objects = [{"Key": document["key"]} for document in documents if document.get("key")]
     if objects:
         with log_timing(logger, "s3_delete_documents", object_count=len(objects)):

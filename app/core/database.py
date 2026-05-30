@@ -1,4 +1,4 @@
-from functools import lru_cache
+from threading import Lock
 
 import psycopg
 from psycopg import Connection
@@ -11,6 +11,7 @@ from app.core.config import (
     POSTGRES_HOST,
     POSTGRES_PASSWORD,
     POSTGRES_PORT,
+    POSTGRES_CONNECT_TIMEOUT,
     POSTGRES_SSLMODE,
     POSTGRES_USER,
 )
@@ -18,8 +19,35 @@ from app.core.logging import get_logger, log_timing, trace
 
 logger = get_logger(__name__)
 
+SCHEMA_VERSION = 2
+SCHEMA_DESCRIPTION = "Add local user profile and PIN storage"
+_schema_init_lock = Lock()
+_schema_initialized = False
+
 SCHEMA_SQL = """
 CREATE SCHEMA IF NOT EXISTS rag;
+
+CREATE TABLE IF NOT EXISTS rag.schema_migrations (
+    version INTEGER PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS rag.users (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    name TEXT NOT NULL DEFAULT 'Local user',
+    avatar_url TEXT NOT NULL DEFAULT 'https://api.dicebear.com/9.x/shapes/svg?seed=mindmesh&backgroundColor=16091f',
+    pin_hash TEXT,
+    pin_salt TEXT,
+    pin_iterations INTEGER NOT NULL DEFAULT 210000,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT users_singleton_check CHECK (id),
+    CONSTRAINT users_pin_pair_check CHECK (
+        (pin_hash IS NULL AND pin_salt IS NULL)
+        OR (pin_hash IS NOT NULL AND pin_salt IS NOT NULL)
+    )
+);
 
 CREATE TABLE IF NOT EXISTS rag.documents (
     id TEXT PRIMARY KEY,
@@ -203,13 +231,18 @@ def connect() -> Connection:
             },
         )
         if DATABASE_URL:
-            return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+            return psycopg.connect(
+                DATABASE_URL,
+                connect_timeout=POSTGRES_CONNECT_TIMEOUT,
+                row_factory=dict_row,
+            )
 
         kwargs = {
             "host": POSTGRES_HOST,
             "port": POSTGRES_PORT,
             "dbname": POSTGRES_DB,
             "user": POSTGRES_USER,
+            "connect_timeout": POSTGRES_CONNECT_TIMEOUT,
             "row_factory": dict_row,
         }
 
@@ -228,16 +261,66 @@ def connect() -> Connection:
         ) from exc
 
 
-def init_db() -> None:
-    trace("Database initialization started", logger)
-    with log_timing(logger, "database_schema_init"):
-        with connect() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(SCHEMA_SQL)
-            conn.commit()
-    trace("Database initialization completed", logger)
+def _current_schema_version(conn: Connection) -> int:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT to_regclass('rag.schema_migrations') AS migration_table"
+        )
+        if not cursor.fetchone()["migration_table"]:
+            return 0
+
+        cursor.execute(
+            "SELECT COALESCE(MAX(version), 0) AS version FROM rag.schema_migrations"
+        )
+        return int(cursor.fetchone()["version"] or 0)
 
 
-@lru_cache(maxsize=1)
+def _apply_schema(conn: Connection, *, force: bool = False) -> bool:
+    current_version = 0 if force else _current_schema_version(conn)
+    if current_version >= SCHEMA_VERSION:
+        logger.debug(
+            "database schema already initialized",
+            extra={"event": {"schema_version": current_version}},
+        )
+        return False
+
+    with conn.cursor() as cursor:
+        cursor.execute(SCHEMA_SQL)
+        cursor.execute(
+            """
+            INSERT INTO rag.schema_migrations (version, description)
+            VALUES (%s, %s)
+            ON CONFLICT (version) DO NOTHING
+            """,
+            (SCHEMA_VERSION, SCHEMA_DESCRIPTION),
+        )
+    return True
+
+
+def init_db(*, force: bool = False) -> None:
+    global _schema_initialized
+
+    if _schema_initialized and not force:
+        return
+
+    with _schema_init_lock:
+        if _schema_initialized and not force:
+            return
+
+        trace("Database initialization started", logger)
+        with log_timing(logger, "database_schema_init"):
+            with connect() as conn:
+                applied = _apply_schema(conn, force=force)
+                conn.commit()
+        _schema_initialized = True
+
+        if applied:
+            logger.info(
+                "database schema initialized",
+                extra={"event": {"schema_version": SCHEMA_VERSION}},
+            )
+        trace("Database initialization completed", logger)
+
+
 def ensure_database() -> None:
     init_db()

@@ -70,6 +70,7 @@ POSTGRES_DB = get_env("POSTGRES_DB", "mm_poc")
 POSTGRES_USER = get_env("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = get_optional_env("POSTGRES_PASSWORD")
 POSTGRES_SSLMODE = get_optional_env("POSTGRES_SSLMODE", "disable")
+POSTGRES_CONNECT_TIMEOUT = get_int_env("POSTGRES_CONNECT_TIMEOUT", default=5)
 
 S3_ENDPOINT_URL = get_env("S3_ENDPOINT_URL")
 S3_BUCKET = get_env("S3_BUCKET")

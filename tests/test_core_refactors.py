@@ -25,7 +25,7 @@ for name, value in REQUIRED_ENV.items():
     os.environ.setdefault(name, value)
 
 from app.core.serialization import serialize_datetime
-from app.core.storage import document_file_type, list_document_objects, list_pdf_objects
+from app.core.storage import document_file_type, ensure_bucket, list_document_objects, list_pdf_objects
 from app.services.ai_settings import _normalize_base_url
 from app.services.document_storage import _next_version, _safe_document_filename, _safe_pdf_filename, parse_tags
 from app.services.preprocessing import _page_number
@@ -50,9 +50,29 @@ class FakePaginator:
 
 
 class FakeS3Client:
+    def head_bucket(self, Bucket):
+        return {}
+
     def get_paginator(self, name):
         self.paginator_name = name
         return FakePaginator()
+
+
+class FakeMissingBucketClient(FakeS3Client):
+    def __init__(self):
+        self.created_buckets = []
+
+    def head_bucket(self, Bucket):
+        class MissingBucketError(Exception):
+            response = {
+                "Error": {"Code": "NoSuchBucket"},
+                "ResponseMetadata": {"HTTPStatusCode": 404},
+            }
+
+        raise MissingBucketError()
+
+    def create_bucket(self, **kwargs):
+        self.created_buckets.append(kwargs["Bucket"])
 
 
 class CoreRefactorTests(unittest.TestCase):
@@ -94,6 +114,11 @@ class CoreRefactorTests(unittest.TestCase):
     def test_list_pdf_objects_keeps_backward_compatible_name(self):
         objects = list_pdf_objects(FakeS3Client(), bucket="test-bucket", prefix="pdf/")
         self.assertEqual(len(objects), 6)
+
+    def test_ensure_bucket_creates_missing_bucket(self):
+        client = FakeMissingBucketClient()
+        ensure_bucket(client, bucket="test-bucket")
+        self.assertEqual(client.created_buckets, ["test-bucket"])
 
     def test_docling_page_number_extraction(self):
         metadata = {

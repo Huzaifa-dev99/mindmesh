@@ -2,6 +2,7 @@ import json
 from pathlib import PurePosixPath
 from typing import Any
 
+from psycopg import Connection
 from psycopg.types.json import Jsonb
 
 from app.core.config import DOCUMENT_REGISTRY_PATH, S3_BUCKET
@@ -485,15 +486,7 @@ def delete_documents(doc_ids: list[str]) -> int:
     return deleted
 
 
-def migrate_json_registry() -> int:
-    """Import the legacy JSON registry into Postgres once, if it exists."""
-    trace("Legacy document registry migration check started", logger)
-    ensure_database()
-    if not DOCUMENT_REGISTRY_PATH.exists():
-        logger.info("legacy document registry migration skipped; file not found")
-        trace("Legacy document registry migration skipped", logger)
-        return 0
-
+def _migrate_json_registry(conn: Connection) -> int:
     logger.info("legacy document registry file loading", extra={"event": {"path": str(DOCUMENT_REGISTRY_PATH)}})
     with DOCUMENT_REGISTRY_PATH.open("r", encoding="utf-8") as file:
         registry = json.load(file)
@@ -501,7 +494,7 @@ def migrate_json_registry() -> int:
     records = registry.get("documents", {}).values()
     migrated = 0
 
-    with connect() as conn:
+    with conn.cursor() as cursor:
         for record in records:
             doc_id = record.get("id")
             bucket = record.get("bucket")
@@ -509,75 +502,90 @@ def migrate_json_registry() -> int:
             if not doc_id or not bucket or not key:
                 continue
 
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO rag.documents (
-                        id,
-                        bucket,
-                        object_key,
-                        filename,
-                        logical_filename,
-                        document_version,
-                        tags,
-                        lexical_hash,
-                        status,
-                        etag,
-                        size_bytes,
-                        last_modified,
-                        last_seen_at,
-                        indexed_at,
-                        chunk_count,
-                        point_ids,
-                        last_error
-                    )
-                    VALUES (
-                        %(id)s,
-                        %(bucket)s,
-                        %(object_key)s,
-                        %(filename)s,
-                        %(logical_filename)s,
-                        %(document_version)s,
-                        %(tags)s,
-                        %(lexical_hash)s,
-                        %(status)s,
-                        %(etag)s,
-                        %(size)s,
-                        %(last_modified)s,
-                        COALESCE(%(last_seen_at)s, NOW()),
-                        %(indexed_at)s,
-                        %(chunk_count)s,
-                        %(point_ids)s,
-                        %(last_error)s
-                    )
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    {
-                        "id": doc_id,
-                        "bucket": bucket,
-                        "object_key": key,
-                        "filename": record.get("filename") or PurePosixPath(key).name,
-                        "logical_filename": record.get("logical_filename")
-                        or record.get("filename")
-                        or PurePosixPath(key).name,
-                        "document_version": record.get("document_version"),
-                        "tags": Jsonb(record.get("tags") or []),
-                        "lexical_hash": record.get("lexical_hash"),
-                        "status": record.get("status") or NOT_INDEXED,
-                        "etag": record.get("etag"),
-                        "size": record.get("size"),
-                        "last_modified": record.get("last_modified"),
-                        "last_seen_at": record.get("last_seen_at"),
-                        "indexed_at": record.get("indexed_at"),
-                        "chunk_count": record.get("chunk_count") or 0,
-                        "point_ids": Jsonb(record.get("point_ids") or []),
-                        "last_error": record.get("last_error"),
-                    },
+            cursor.execute(
+                """
+                INSERT INTO rag.documents (
+                    id,
+                    bucket,
+                    object_key,
+                    filename,
+                    logical_filename,
+                    document_version,
+                    tags,
+                    lexical_hash,
+                    status,
+                    etag,
+                    size_bytes,
+                    last_modified,
+                    last_seen_at,
+                    indexed_at,
+                    chunk_count,
+                    point_ids,
+                    last_error
                 )
-                migrated += cursor.rowcount
-
-        conn.commit()
+                VALUES (
+                    %(id)s,
+                    %(bucket)s,
+                    %(object_key)s,
+                    %(filename)s,
+                    %(logical_filename)s,
+                    %(document_version)s,
+                    %(tags)s,
+                    %(lexical_hash)s,
+                    %(status)s,
+                    %(etag)s,
+                    %(size)s,
+                    %(last_modified)s,
+                    COALESCE(%(last_seen_at)s, NOW()),
+                    %(indexed_at)s,
+                    %(chunk_count)s,
+                    %(point_ids)s,
+                    %(last_error)s
+                )
+                ON CONFLICT (id) DO NOTHING
+                """,
+                {
+                    "id": doc_id,
+                    "bucket": bucket,
+                    "object_key": key,
+                    "filename": record.get("filename") or PurePosixPath(key).name,
+                    "logical_filename": record.get("logical_filename")
+                    or record.get("filename")
+                    or PurePosixPath(key).name,
+                    "document_version": record.get("document_version"),
+                    "tags": Jsonb(record.get("tags") or []),
+                    "lexical_hash": record.get("lexical_hash"),
+                    "status": record.get("status") or NOT_INDEXED,
+                    "etag": record.get("etag"),
+                    "size": record.get("size"),
+                    "last_modified": record.get("last_modified"),
+                    "last_seen_at": record.get("last_seen_at"),
+                    "indexed_at": record.get("indexed_at"),
+                    "chunk_count": record.get("chunk_count") or 0,
+                    "point_ids": Jsonb(record.get("point_ids") or []),
+                    "last_error": record.get("last_error"),
+                },
+            )
+            migrated += cursor.rowcount
 
     logger.info("legacy document registry migration completed", extra={"event": {"migrated": migrated}})
     trace(f"Legacy document registry migration completed with {migrated} record(s)", logger)
     return migrated
+
+
+def migrate_json_registry(conn: Connection | None = None) -> int:
+    """Import the legacy JSON registry into Postgres once, if it exists."""
+    trace("Legacy document registry migration check started", logger)
+    if not DOCUMENT_REGISTRY_PATH.exists():
+        logger.info("legacy document registry migration skipped; file not found")
+        trace("Legacy document registry migration skipped", logger)
+        return 0
+
+    if conn is None:
+        ensure_database()
+        with connect() as db_conn:
+            migrated = _migrate_json_registry(db_conn)
+            db_conn.commit()
+            return migrated
+
+    return _migrate_json_registry(conn)

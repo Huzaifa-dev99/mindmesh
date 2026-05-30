@@ -55,6 +55,29 @@ def s3_client():
     )
 
 
+def ensure_bucket(client: Any | None = None, *, bucket: str = S3_BUCKET) -> None:
+    client = client or s3_client()
+    try:
+        client.head_bucket(Bucket=bucket)
+        logger.debug("s3 bucket exists", extra={"event": {"bucket": bucket}})
+        return
+    except Exception as exc:
+        response = getattr(exc, "response", {}) or {}
+        status_code = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        error_code = response.get("Error", {}).get("Code")
+        if status_code not in {404, 400} and error_code not in {"404", "NoSuchBucket", "NotFound"}:
+            raise
+
+    create_kwargs = {"Bucket": bucket}
+    if S3_REGION_NAME and S3_REGION_NAME != "us-east-1" and not S3_ENDPOINT_URL:
+        create_kwargs["CreateBucketConfiguration"] = {
+            "LocationConstraint": S3_REGION_NAME
+        }
+
+    logger.info("s3 bucket creating", extra={"event": {"bucket": bucket}})
+    client.create_bucket(**create_kwargs)
+
+
 def document_extension(filename: str) -> str:
     suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if suffix not in SUPPORTED_DOCUMENT_EXTENSIONS:
@@ -84,6 +107,7 @@ def list_document_objects(
     prefix: str = S3_PREFIX,
 ) -> list[dict]:
     client = client or s3_client()
+    ensure_bucket(client, bucket=bucket)
     paginator = client.get_paginator("list_objects_v2")
     objects = []
 

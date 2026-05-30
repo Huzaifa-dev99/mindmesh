@@ -5,11 +5,12 @@ from fastapi import FastAPI, Request
 
 from app.api.v1.routes import router
 from app.core.config import API_V1_PREFIX, APP_NAME
-from app.core.database import init_db
+from app.core.database import connect, ensure_database
 from app.core.logging import configure_logging, get_logger, log_timing, trace
 from app.services.document_registry import migrate_json_registry
 from app.services.ai_settings import seed_ai_settings
 from app.services.prompts import seed_default_prompts
+from app.services.users import seed_user
 
 configure_logging()
 logger = get_logger(__name__)
@@ -19,10 +20,13 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     trace("API startup started", logger)
     with log_timing(logger, "api_startup"):
-        init_db()
-        seed_ai_settings()
-        seed_default_prompts()
-        migrated = migrate_json_registry()
+        ensure_database()
+        with connect() as conn:
+            seed_user(conn)
+            seed_ai_settings(conn)
+            seed_default_prompts(conn)
+            migrated = migrate_json_registry(conn)
+            conn.commit()
         logger.info("legacy registry migration checked", extra={"event": {"migrated": migrated}})
     trace("API startup completed", logger)
     yield

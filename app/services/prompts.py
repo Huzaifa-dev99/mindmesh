@@ -1,6 +1,8 @@
 from typing import Any
 from uuid import uuid4
 
+from psycopg import Connection
+
 from app.core.database import connect, ensure_database
 from app.core.logging import get_logger, trace
 from app.core.serialization import serialize_datetime
@@ -133,44 +135,59 @@ User question:
     },
 }
 
-def seed_default_prompts() -> None:
-    ensure_database()
-    with connect() as conn:
-        with conn.cursor() as cursor:
-            for name, prompt in DEFAULT_PROMPTS.items():
-                cursor.execute(
-                    """
-                    INSERT INTO rag.prompts (
-                        name,
-                        title,
-                        description,
-                        active_version
-                    )
-                    VALUES (%s, %s, %s, 1)
-                    ON CONFLICT (name) DO NOTHING
-                    """,
-                    (name, prompt["title"], prompt["description"]),
-                )
-                cursor.execute(
-                    """
-                    INSERT INTO rag.prompt_versions (
-                        id,
-                        prompt_name,
-                        version,
-                        content,
-                        change_note
-                    )
-                    VALUES (%s, %s, 1, %s, %s)
-                    ON CONFLICT (prompt_name, version) DO NOTHING
-                    """,
-                    (
-                        uuid4(),
-                        name,
-                        prompt["content"],
-                        "Initial prompt extracted from codebase.",
-                    ),
-                )
-        conn.commit()
+def _seed_default_prompts(conn: Connection) -> None:
+    prompt_rows = [
+        (name, prompt["title"], prompt["description"])
+        for name, prompt in DEFAULT_PROMPTS.items()
+    ]
+    version_rows = [
+        (
+            uuid4(),
+            name,
+            prompt["content"],
+            "Initial prompt extracted from codebase.",
+        )
+        for name, prompt in DEFAULT_PROMPTS.items()
+    ]
+
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            """
+            INSERT INTO rag.prompts (
+                name,
+                title,
+                description,
+                active_version
+            )
+            VALUES (%s, %s, %s, 1)
+            ON CONFLICT (name) DO NOTHING
+            """,
+            prompt_rows,
+        )
+        cursor.executemany(
+            """
+            INSERT INTO rag.prompt_versions (
+                id,
+                prompt_name,
+                version,
+                content,
+                change_note
+            )
+            VALUES (%s, %s, 1, %s, %s)
+            ON CONFLICT (prompt_name, version) DO NOTHING
+            """,
+            version_rows,
+        )
+
+
+def seed_default_prompts(conn: Connection | None = None) -> None:
+    if conn is None:
+        ensure_database()
+        with connect() as db_conn:
+            _seed_default_prompts(db_conn)
+            db_conn.commit()
+    else:
+        _seed_default_prompts(conn)
     logger.debug("default prompt seeding checked", extra={"event": {"prompt_count": len(DEFAULT_PROMPTS)}})
 
 

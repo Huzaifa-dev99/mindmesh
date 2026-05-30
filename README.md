@@ -36,13 +36,10 @@ python run.py --ui
 To run the React frontend:
 
 ```powershell
-python run.py
-cd frontend
-npm install
-npm run dev
+python run.py --fe
 ```
 
-The React app runs at `http://127.0.0.1:5173` and proxies `/api` requests to the FastAPI backend on `http://127.0.0.1:8000`.
+The React app runs at `http://127.0.0.1:5173`. The runner installs frontend packages when needed, starts FastAPI, and points the Vite `/api` proxy at the actual backend port.
 
 For production-like API serving without the Streamlit debug UI:
 

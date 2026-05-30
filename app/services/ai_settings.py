@@ -3,6 +3,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
+from psycopg import Connection
 import requests
 
 from app.core.config import (
@@ -138,25 +139,32 @@ def _clear_llm_cache() -> None:
         logger.warning("llm cache clear failed", exc_info=True)
 
 
-def seed_ai_settings() -> None:
-    ensure_database()
-    with connect() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO rag.ai_settings (
-                    id,
-                    active_provider,
-                    active_model,
-                    temperature,
-                    max_tokens
-                )
-                VALUES (TRUE, %s, %s, %s, %s)
-                ON CONFLICT (id) DO NOTHING
-                """,
-                ("groq", GROQ_MODEL, GROQ_TEMPERATURE, GROQ_MAX_TOKENS),
+def _seed_ai_settings(conn: Connection) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag.ai_settings (
+                id,
+                active_provider,
+                active_model,
+                temperature,
+                max_tokens
             )
-        conn.commit()
+            VALUES (TRUE, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            ("groq", GROQ_MODEL, GROQ_TEMPERATURE, GROQ_MAX_TOKENS),
+        )
+
+
+def seed_ai_settings(conn: Connection | None = None) -> None:
+    if conn is None:
+        ensure_database()
+        with connect() as db_conn:
+            _seed_ai_settings(db_conn)
+            db_conn.commit()
+    else:
+        _seed_ai_settings(conn)
     logger.debug("ai settings seed checked")
 
 
