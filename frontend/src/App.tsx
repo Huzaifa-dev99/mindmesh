@@ -8,7 +8,6 @@ import {
   Brain,
   CheckCircle2,
   Check,
-  ChevronDown,
   Clock3,
   Command,
   Database,
@@ -433,6 +432,7 @@ function AppShell({ profile: initialProfile }: { profile: UserProfile }) {
   const [connectionStatus, setConnectionStatus] = useState<"online" | "offline" | "warn">("warn");
   const [profile, setProfile] = useState(initialProfile);
   const [attachedDocumentIds, setAttachedDocumentIds] = useState<string[]>(readStoredDocumentIds);
+  const [settingsDialogPath, setSettingsDialogPath] = useState("");
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
 
@@ -472,9 +472,19 @@ function AppShell({ profile: initialProfile }: { profile: UserProfile }) {
     <WorkspaceContext.Provider value={workspace}>
       <div className="theme-scope app-shell min-h-screen text-slate-100">
         <div className="ambient-backdrop pointer-events-none fixed inset-0" />
-        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} connectionStatus={connectionStatus} />
+        <Sidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          connectionStatus={connectionStatus}
+          onOpenSettings={(path) => setSettingsDialogPath(path)}
+        />
         <div className="relative min-w-0 lg:pl-[296px]">
-          <TopBar onMenu={() => setSidebarOpen(true)} onToggleTheme={toggleTheme} theme={theme} />
+          <TopBar
+            onMenu={() => setSidebarOpen(true)}
+            onOpenSettings={() => setSettingsDialogPath("/admin")}
+            onToggleTheme={toggleTheme}
+            theme={theme}
+          />
           <main
             className={cn(
               "relative min-w-0 px-4 pb-6 pt-4 sm:px-6 lg:px-8 lg:pt-6",
@@ -504,6 +514,12 @@ function AppShell({ profile: initialProfile }: { profile: UserProfile }) {
             </AnimatePresence>
           </main>
         </div>
+        <WorkspaceSettingsDialog
+          activePath={settingsDialogPath}
+          open={Boolean(settingsDialogPath)}
+          onChange={setSettingsDialogPath}
+          onClose={() => setSettingsDialogPath("")}
+        />
       </div>
     </WorkspaceContext.Provider>
   );
@@ -512,17 +528,18 @@ function AppShell({ profile: initialProfile }: { profile: UserProfile }) {
 function Sidebar({
   open,
   onClose,
-  connectionStatus
+  connectionStatus,
+  onOpenSettings
 }: {
   open: boolean;
   onClose: () => void;
   connectionStatus: "online" | "offline" | "warn";
+  onOpenSettings: (path: string) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
   const workspace = useWorkspace();
   const [activeTab, setActiveTab] = useState<"documents" | "chats">("documents");
-  const [profileOpen, setProfileOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [openActions, setOpenActions] = useState("");
   const documentsState = useAsyncData<DocumentItem[]>(
@@ -673,11 +690,14 @@ function Sidebar({
           </div>
         </div>
 
-        <div className="relative mt-3">
+        <div className="mt-3">
           <button
-            aria-expanded={profileOpen}
+            aria-haspopup="dialog"
             className="focus-ring flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.025] p-3 text-left transition hover:bg-white/[0.055]"
-            onClick={() => setProfileOpen((current) => !current)}
+            onClick={() => {
+              onOpenSettings("/profile");
+              onClose();
+            }}
           >
             <ProfileAvatar profile={workspace.profile} />
             <div className="min-w-0 flex-1">
@@ -687,18 +707,8 @@ function Sidebar({
                 Services {connectionStatus}
               </p>
             </div>
-            <ChevronDown className={cn("h-4 w-4 text-slate-500 transition", profileOpen && "rotate-180")} />
+            <Settings className="h-4 w-4 text-slate-500" />
           </button>
-          {profileOpen ? (
-            <SettingsMenu
-              className="absolute bottom-[72px] left-0 right-0"
-              onNavigate={(path) => {
-                setProfileOpen(false);
-                navigate(path);
-                onClose();
-              }}
-            />
-          ) : null}
         </div>
       </aside>
     </>
@@ -836,14 +846,17 @@ function WorkspaceSessions({
   );
 }
 
-function SettingsMenu({ className = "", onNavigate }: { className?: string; onNavigate: (path: string) => void }) {
+function SettingsMenu({ activePath, onNavigate }: { activePath: string; onNavigate: (path: string) => void }) {
   return (
-    <div className={cn("menu-surface z-40 rounded-2xl border border-white/10 p-2 shadow-2xl", className)}>
-      <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Workspace settings</p>
+    <nav className="flex gap-1 overflow-x-auto p-2 md:flex-col md:overflow-visible" aria-label="Workspace settings sections">
       {settingsLinks.map((item) => (
         <button
           key={item.path}
-          className="focus-ring flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition hover:bg-white/8"
+          aria-current={activePath === item.path ? "page" : undefined}
+          className={cn(
+            "focus-ring flex shrink-0 items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition md:w-full",
+            activePath === item.path ? "active-nav" : "hover:bg-white/8"
+          )}
           onClick={() => onNavigate(item.path)}
         >
           <span className="accent-icon grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-cyan-300/10 text-cyan-200">
@@ -851,12 +864,103 @@ function SettingsMenu({ className = "", onNavigate }: { className?: string; onNa
           </span>
           <span className="min-w-0">
             <span className="block text-xs font-semibold text-slate-300">{item.label}</span>
-            <span className="mt-0.5 block truncate text-[11px] text-slate-500">{item.description}</span>
+            <span className="mt-0.5 hidden truncate text-[11px] text-slate-500 md:block">{item.description}</span>
           </span>
         </button>
       ))}
-    </div>
+    </nav>
   );
+}
+
+function WorkspaceSettingsDialog({
+  activePath,
+  open,
+  onChange,
+  onClose
+}: {
+  activePath: string;
+  open: boolean;
+  onChange: (path: string) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open, onClose]);
+
+  return (
+    <AnimatePresence>
+      {open ? (
+        <motion.div
+          className="fixed inset-0 z-[80] grid place-items-center bg-black/55 p-2 backdrop-blur-sm sm:p-5"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          role="presentation"
+          onMouseDown={onClose}
+        >
+          <motion.section
+            aria-labelledby="workspace-settings-title"
+            aria-modal="true"
+            className="menu-surface flex h-[min(900px,calc(100vh-16px))] w-full max-w-[1280px] flex-col overflow-hidden rounded-[22px] border border-white/10 shadow-2xl sm:h-[min(900px,calc(100vh-40px))]"
+            initial={{ opacity: 0, scale: 0.985, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.985, y: 8 }}
+            transition={{ duration: 0.16 }}
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3 sm:px-5">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">MindMesh workspace</p>
+                <h2 className="mt-1 text-lg font-semibold text-white" id="workspace-settings-title">Settings</h2>
+              </div>
+              <button
+                autoFocus
+                aria-label="Close workspace settings"
+                className="focus-ring rounded-xl border border-white/10 bg-white/[0.035] p-2.5 text-slate-400 transition hover:border-white/20 hover:bg-white/[0.075] hover:text-white"
+                onClick={onClose}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+            <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[232px_minmax(0,1fr)] md:grid-rows-1">
+              <div className="min-w-0 overflow-hidden border-b border-white/10 md:border-b-0 md:border-r">
+                <SettingsMenu activePath={activePath} onNavigate={onChange} />
+              </div>
+              <div className="min-w-0 overflow-x-hidden overflow-y-auto p-4 sm:p-6">
+                <SettingsDialogPage path={activePath} />
+              </div>
+            </div>
+          </motion.section>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+function SettingsDialogPage({ path }: { path: string }) {
+  switch (path) {
+    case "/admin/prompts":
+      return <PromptLibraryPage />;
+    case "/admin":
+      return <AdminPage />;
+    case "/api-connection":
+      return <ApiConnectionPage />;
+    case "/personalization":
+      return <PersonalizationPage />;
+    default:
+      return <ProfilePage />;
+  }
 }
 
 function ProfileAvatar({ profile, className = "" }: { profile: UserProfile; className?: string }) {
@@ -869,17 +973,17 @@ function ProfileAvatar({ profile, className = "" }: { profile: UserProfile; clas
 
 function TopBar({
   onMenu,
+  onOpenSettings,
   onToggleTheme,
   theme
 }: {
   onMenu: () => void;
+  onOpenSettings: () => void;
   onToggleTheme: () => void;
   theme: Theme;
 }) {
-  const navigate = useNavigate();
   const location = useLocation();
   const workspace = useWorkspace();
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const currentPage = pageLabels[location.pathname] || "Workspace";
 
   return (
@@ -905,25 +1009,14 @@ function TopBar({
           >
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
-          <div className="relative">
-            <button
-              aria-expanded={settingsOpen}
-              aria-label="Open workspace settings"
-              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-400 transition hover:border-white/20 hover:bg-white/[0.075] hover:text-white"
-              onClick={() => setSettingsOpen((current) => !current)}
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-            {settingsOpen ? (
-              <SettingsMenu
-                className="absolute right-0 top-12 w-72"
-                onNavigate={(path) => {
-                  setSettingsOpen(false);
-                  navigate(path);
-                }}
-              />
-            ) : null}
-          </div>
+          <button
+            aria-haspopup="dialog"
+            aria-label="Open workspace settings"
+            className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-400 transition hover:border-white/20 hover:bg-white/[0.075] hover:text-white"
+            onClick={onOpenSettings}
+          >
+            <Settings className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </header>
