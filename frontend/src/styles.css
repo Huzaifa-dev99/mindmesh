@@ -109,6 +109,54 @@
   --chart-5: #b5737b;
 }
 
+:root[data-accent="sage"] {
+  --accent-solid: #7eac99;
+  --accent-hover: #92bba9;
+  --accent-text: #aed3c4;
+  --accent-soft: rgba(126, 172, 153, 0.13);
+  --accent-line: rgba(126, 172, 153, 0.3);
+  --accent-contrast: #16251f;
+  --focus: rgba(135, 188, 166, 0.82);
+  --ambient-accent: rgba(92, 151, 128, 0.11);
+  --chart-1: #7eac99;
+}
+
+:root[data-accent="lavender"] {
+  --accent-solid: #a79cc0;
+  --accent-hover: #b8adcd;
+  --accent-text: #cdc3dd;
+  --accent-soft: rgba(167, 156, 192, 0.13);
+  --accent-line: rgba(167, 156, 192, 0.3);
+  --accent-contrast: #211e2b;
+  --focus: rgba(183, 170, 207, 0.82);
+  --ambient-accent: rgba(129, 113, 163, 0.11);
+  --chart-1: #a79cc0;
+}
+
+:root[data-theme="light"][data-accent="sage"] {
+  --accent-solid: #4f7f70;
+  --accent-hover: #426f61;
+  --accent-text: #477668;
+  --accent-soft: rgba(97, 153, 133, 0.13);
+  --accent-line: rgba(83, 139, 120, 0.3);
+  --accent-contrast: #f8fbf9;
+  --focus: rgba(84, 144, 124, 0.72);
+  --ambient-accent: rgba(136, 181, 164, 0.16);
+  --chart-1: #649b88;
+}
+
+:root[data-theme="light"][data-accent="lavender"] {
+  --accent-solid: #70638e;
+  --accent-hover: #62557f;
+  --accent-text: #6b5f89;
+  --accent-soft: rgba(148, 133, 177, 0.13);
+  --accent-line: rgba(129, 112, 160, 0.3);
+  --accent-contrast: #fbf9fd;
+  --focus: rgba(124, 105, 160, 0.72);
+  --ambient-accent: rgba(181, 166, 203, 0.16);
+  --chart-1: #9385ac;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -206,6 +254,18 @@ button:disabled {
   background: var(--menu);
   border-color: var(--line);
   box-shadow: var(--shadow-floating);
+}
+
+.chat-settings-panel {
+  background: color-mix(in srgb, var(--menu) 96%, transparent);
+  border-color: var(--line);
+  box-shadow: var(--shadow-floating);
+  backdrop-filter: blur(18px);
+}
+
+.accent-choice-active {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent-line) !important;
 }
 
 .composer-footer {

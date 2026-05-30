@@ -19,8 +19,8 @@ from app.core.logging import get_logger, log_timing, trace
 
 logger = get_logger(__name__)
 
-SCHEMA_VERSION = 2
-SCHEMA_DESCRIPTION = "Add local user profile and PIN storage"
+SCHEMA_VERSION = 3
+SCHEMA_DESCRIPTION = "Add workspace profile personalization and chat session organization"
 _schema_init_lock = Lock()
 _schema_initialized = False
 
@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS rag.users (
     id BOOLEAN PRIMARY KEY DEFAULT TRUE,
     name TEXT NOT NULL DEFAULT 'Local user',
     avatar_url TEXT NOT NULL DEFAULT 'https://api.dicebear.com/9.x/shapes/svg?seed=mindmesh&backgroundColor=16091f',
+    bio TEXT NOT NULL DEFAULT '',
+    nicknames JSONB NOT NULL DEFAULT '[]'::jsonb,
+    highlight_color TEXT NOT NULL DEFAULT 'mist',
     pin_hash TEXT,
     pin_salt TEXT,
     pin_iterations INTEGER NOT NULL DEFAULT 210000,
@@ -48,6 +51,11 @@ CREATE TABLE IF NOT EXISTS rag.users (
         OR (pin_hash IS NOT NULL AND pin_salt IS NOT NULL)
     )
 );
+
+ALTER TABLE rag.users
+    ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS nicknames JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS highlight_color TEXT NOT NULL DEFAULT 'mist';
 
 CREATE TABLE IF NOT EXISTS rag.documents (
     id TEXT PRIMARY KEY,
@@ -99,9 +107,13 @@ CREATE INDEX IF NOT EXISTS documents_bucket_lexical_hash_idx
 CREATE TABLE IF NOT EXISTS rag.chat_sessions (
     id UUID PRIMARY KEY,
     title TEXT,
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE rag.chat_sessions
+    ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS rag.chat_interactions (
     id UUID PRIMARY KEY,

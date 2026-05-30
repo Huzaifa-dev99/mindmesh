@@ -11,6 +11,9 @@ class HealthResponse(BaseModel):
 class UserProfileRequest(BaseModel):
     name: str = Field(min_length=1)
     avatar: str = Field(min_length=1)
+    bio: str = ""
+    nicknames: list[str] = Field(default_factory=list)
+    highlight_color: str = "mist"
 
 
 class UserPinRequest(BaseModel):
@@ -109,6 +112,11 @@ class ChatSessionsResponse(BaseModel):
 
 class ChatInteractionsResponse(BaseModel):
     interactions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ChatSessionUpdateRequest(BaseModel):
+    title: str | None = None
+    archived: bool | None = None
 
 
 class DashboardResponse(BaseModel):

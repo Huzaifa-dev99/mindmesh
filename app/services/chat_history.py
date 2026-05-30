@@ -366,6 +366,7 @@ def list_sessions() -> list[dict]:
                 SELECT
                     session.id,
                     session.title,
+                    session.archived,
                     session.created_at,
                     session.updated_at,
                     COUNT(interaction.id) AS interaction_count
@@ -380,6 +381,7 @@ def list_sessions() -> list[dict]:
                 {
                     "id": str(row["id"]),
                     "title": row["title"],
+                    "archived": bool(row.get("archived")),
                     "created_at": serialize_datetime(row["created_at"]),
                     "updated_at": serialize_datetime(row["updated_at"]),
                     "interaction_count": row["interaction_count"],
@@ -389,6 +391,62 @@ def list_sessions() -> list[dict]:
     logger.info("chat session listing completed", extra={"event": {"session_count": len(sessions)}})
     trace(f"Chat session listing completed with {len(sessions)} session(s)", logger)
     return sessions
+
+
+def update_session(
+    session_id: str | UUID,
+    *,
+    title: str | None = None,
+    archived: bool | None = None,
+) -> dict:
+    trace("Chat session update started", logger)
+    ensure_database()
+    session_uuid = _uuid(session_id)
+    cleaned_title = str(title or "").strip() if title is not None else None
+    if title is not None and not cleaned_title:
+        raise ValueError("Chat title cannot be empty.")
+
+    with connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE rag.chat_sessions
+                SET title = COALESCE(%s, title),
+                    archived = COALESCE(%s, archived),
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (cleaned_title, archived, session_uuid),
+            )
+            row = cursor.fetchone()
+        conn.commit()
+
+    if not row:
+        raise ValueError("Chat session was not found.")
+
+    return {
+        "id": str(row["id"]),
+        "title": row["title"],
+        "archived": bool(row.get("archived")),
+        "created_at": serialize_datetime(row["created_at"]),
+        "updated_at": serialize_datetime(row["updated_at"]),
+    }
+
+
+def delete_session(session_id: str | UUID) -> None:
+    trace("Chat session deletion started", logger)
+    ensure_database()
+    session_uuid = _uuid(session_id)
+
+    with connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM rag.chat_sessions WHERE id = %s", (session_uuid,))
+            deleted = cursor.rowcount
+        conn.commit()
+
+    if not deleted:
+        raise ValueError("Chat session was not found.")
 
 
 def list_interactions(session_id: str | UUID) -> list[dict]:
