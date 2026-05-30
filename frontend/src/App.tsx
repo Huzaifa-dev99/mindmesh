@@ -32,6 +32,8 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Moon,
+  Sun,
   Tags,
   TerminalSquare,
   Trash2,
@@ -90,15 +92,17 @@ type PromptItem = {
 };
 
 const navItems = [
-  { path: "/dashboard", label: "Dashboard", icon: Home },
-  { path: "/documents", label: "Documents", icon: FileText },
-  { path: "/chat", label: "Chat", icon: MessageSquare },
-  { path: "/admin", label: "Admin", icon: Settings },
-  { path: "/admin/prompts", label: "Prompts", icon: TerminalSquare },
-  { path: "/api-connection", label: "API Connection", icon: KeyRound }
+  { path: "/dashboard", label: "Overview", icon: Home, group: "Workspace" },
+  { path: "/documents", label: "Documents", icon: FileText, group: "Workspace" },
+  { path: "/chat", label: "Ask MindMesh", icon: MessageSquare, group: "Workspace" },
+  { path: "/admin/prompts", label: "Prompt library", icon: TerminalSquare, group: "Build" },
+  { path: "/admin", label: "Model settings", icon: Settings, group: "Build" },
+  { path: "/api-connection", label: "Connections", icon: KeyRound, group: "System" }
 ];
 
-const palette = ["#7dd3fc", "#a78bfa", "#34d399", "#fbbf24", "#fb7185"];
+const palette = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
+
+type Theme = "light" | "dark";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -112,7 +116,7 @@ function normalizeStatus(value?: string): Status {
 }
 
 function toDocumentItem(raw: any, index: number): DocumentItem {
-  const bytes = raw.size_bytes || raw.sizeBytes || raw.bytes || 0;
+  const bytes = raw.size_bytes || raw.sizeBytes || raw.bytes || (typeof raw.size === "number" ? raw.size : 0);
   return {
     id: String(raw.id || raw.document_id || raw.filename || `doc-${index}`),
     filename: raw.filename || raw.name || `document-${index + 1}.pdf`,
@@ -157,6 +161,19 @@ function matchesSearch(values: Array<string | number | undefined>, query: string
   return values.some((value) => String(value || "").toLowerCase().includes(normalized));
 }
 
+function formatTimestamp(value?: string) {
+  if (!value || value === "Recently") return "Recently";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
+}
+
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -173,6 +190,30 @@ function dashboardTotal(rawDashboard: any, keys: string[], fallback = 0) {
     if (rawDashboard?.totals?.[key] !== undefined) return rawDashboard.totals[key];
   }
   return fallback;
+}
+
+function getInitialTheme(): Theme {
+  const savedTheme = window.localStorage.getItem("mindmesh-theme");
+  if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function useTheme() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const initialTheme = getInitialTheme();
+    document.documentElement.dataset.theme = initialTheme;
+    return initialTheme;
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("mindmesh-theme", theme);
+  }, [theme]);
+
+  return {
+    theme,
+    toggleTheme: () => setTheme((current) => current === "dark" ? "light" : "dark")
+  };
 }
 
 function useAsyncData<T>(loader: () => Promise<T>, fallback: T) {
@@ -237,8 +278,8 @@ function GuardedShell() {
 
   if (checking) {
     return (
-      <div className="grid min-h-screen place-items-center bg-[#07080b] text-slate-200">
-        <Loader2 className="h-6 w-6 animate-spin text-sky-300" />
+      <div className="theme-scope app-canvas grid min-h-screen place-items-center text-slate-200">
+        <Loader2 className="h-6 w-6 animate-spin text-cyan-300" />
       </div>
     );
   }
@@ -274,8 +315,8 @@ function LockScreen({ onUnlock }: { onUnlock: () => void }) {
   };
 
   return (
-    <div className="relative grid min-h-screen place-items-center overflow-hidden bg-[#07080b] px-5">
-      <div className="soft-grid absolute inset-0 opacity-40" />
+    <div className="theme-scope app-canvas relative grid min-h-screen place-items-center overflow-hidden px-5">
+      <div className="ambient-backdrop absolute inset-0" />
       <motion.div
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
@@ -322,6 +363,7 @@ function AppShell({ profile }: { profile: { name: string; avatar_url?: string } 
   const [collapsed, setCollapsed] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"online" | "offline" | "warn">("warn");
   const location = useLocation();
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -335,18 +377,20 @@ function AppShell({ profile }: { profile: { name: string; avatar_url?: string } 
   }, []);
 
   return (
-    <div className="min-h-screen text-slate-100">
-      <div className="soft-grid pointer-events-none fixed inset-0 opacity-30" />
+    <div className="theme-scope app-shell min-h-screen text-slate-100">
+      <div className="ambient-backdrop pointer-events-none fixed inset-0" />
       <Sidebar collapsed={collapsed} open={sidebarOpen} onClose={() => setSidebarOpen(false)} connectionStatus={connectionStatus} />
-      <div className={cn("relative transition-all duration-300", collapsed ? "lg:pl-[92px]" : "lg:pl-[280px]")}>
+      <div className={cn("relative transition-all duration-300", collapsed ? "lg:pl-[88px]" : "lg:pl-[248px]")}>
         <TopBar
           profile={profile}
           collapsed={collapsed}
           onMenu={() => setSidebarOpen(true)}
           onToggleCollapse={() => setCollapsed((value) => !value)}
+          onToggleTheme={toggleTheme}
+          theme={theme}
         />
-        <main className="mx-auto max-w-[1500px] px-4 pb-12 pt-5 sm:px-6 lg:px-8">
-          <AnimatePresence mode="wait">
+        <main className="mx-auto max-w-[1540px] px-4 pb-12 pt-6 sm:px-6 lg:px-8 lg:pt-8">
+          <AnimatePresence initial={false} mode="wait">
             <motion.div
               key={location.pathname}
               initial={{ opacity: 0, y: 10 }}
@@ -399,18 +443,18 @@ function Sidebar({
       </AnimatePresence>
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-white/10 bg-[#090b10]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl transition-all duration-300",
-          collapsed ? "w-[92px]" : "w-[280px]",
+          "sidebar-shell fixed inset-y-0 left-0 z-50 flex flex-col border-r border-white/8 p-3 backdrop-blur-xl transition-all duration-300",
+          collapsed ? "w-[88px]" : "w-[248px]",
           open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
-        <div className={cn("mb-7 flex items-center", collapsed ? "justify-center" : "justify-between")}>
+        <div className={cn("mb-7 flex items-center px-1 pt-1", collapsed ? "justify-center" : "justify-between")}>
           <div className="flex items-center gap-3">
             <BrandMark />
             {!collapsed ? (
               <div>
                 <p className="text-base font-semibold tracking-tight text-white">MindMesh</p>
-                <p className="text-xs text-slate-500">RAG workbench</p>
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Knowledge OS</p>
               </div>
             ) : null}
           </div>
@@ -419,41 +463,48 @@ function Sidebar({
           </button>
         </div>
 
-        <nav className="space-y-1">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === "/admin"}
-              className={({ isActive }) =>
-                cn(
-                  "focus-ring group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition",
-                  collapsed && "justify-center",
-                  isActive
-                    ? "bg-white text-slate-950 shadow-lg shadow-sky-950/20"
-                    : "text-slate-400 hover:bg-white/6 hover:text-white"
-                )
-              }
-              title={collapsed ? item.label : undefined}
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              {!collapsed ? <span>{item.label}</span> : null}
-            </NavLink>
+        <nav aria-label="Primary navigation" className="space-y-5">
+          {["Workspace", "Build", "System"].map((group) => (
+            <div key={group}>
+              {!collapsed ? <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">{group}</p> : null}
+              <div className="space-y-1">
+                {navItems.filter((item) => item.group === group).map((item) => (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.path === "/admin"}
+                    className={({ isActive }) =>
+                      cn(
+                        "focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
+                        collapsed && "justify-center",
+                        isActive
+                          ? "active-nav bg-cyan-300/12 text-cyan-100"
+                          : "text-slate-400 hover:bg-white/[0.055] hover:text-white"
+                      )
+                    }
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    {!collapsed ? <span>{item.label}</span> : null}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
         <div className="mt-auto space-y-3">
           <button
-            className={cn("focus-ring w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:bg-white/[0.055]", collapsed && "px-2 text-center")}
+            className={cn("focus-ring w-full rounded-2xl border border-white/8 bg-white/[0.025] p-3 text-left transition hover:bg-white/[0.055]", collapsed && "px-2 text-center")}
             onClick={() => navigate("/api-connection")}
           >
             <div className={cn("mb-3 flex items-center gap-2", collapsed && "justify-center")}>
               <StatusIndicator status={connectionStatus} />
-              {!collapsed ? <span className="text-xs font-medium text-slate-300">Service status {connectionStatus}</span> : null}
+              {!collapsed ? <span className="text-xs font-semibold capitalize text-slate-300">Services {connectionStatus}</span> : null}
             </div>
             {!collapsed ? (
               <>
-                <p className="text-xs text-slate-500">Open live checks for API, Postgres, vectors, and storage.</p>
+                <p className="text-xs leading-5 text-slate-500">API, database, vectors, and storage checks.</p>
                 <div className="mt-3 h-1.5 rounded-full bg-white/10">
                   <div
                     className={cn(
@@ -477,12 +528,16 @@ function TopBar({
   profile,
   collapsed,
   onMenu,
-  onToggleCollapse
+  onToggleCollapse,
+  onToggleTheme,
+  theme
 }: {
   profile: { name: string; avatar_url?: string };
   collapsed: boolean;
   onMenu: () => void;
   onToggleCollapse: () => void;
+  onToggleTheme: () => void;
+  theme: Theme;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -490,6 +545,7 @@ function TopBar({
   const [query, setQuery] = useState(searchParams.get("q") || "");
   const [profileOpen, setProfileOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const currentPage = navItems.find((item) => item.path === location.pathname)?.label || "Workspace";
 
   useEffect(() => {
     setQuery(searchParams.get("q") || "");
@@ -513,9 +569,9 @@ function TopBar({
   };
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/10 bg-[#07080b]/76 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1500px] items-center gap-3 px-4 sm:px-6 lg:px-8">
-        <button className="focus-ring rounded-xl p-2 text-slate-300 hover:bg-white/6 hover:text-white lg:hidden" onClick={onMenu}>
+    <header className="topbar-shell sticky top-0 z-30 border-b border-white/8 backdrop-blur-xl">
+      <div className="mx-auto flex h-[68px] max-w-[1540px] items-center gap-3 px-4 sm:px-6 lg:px-8">
+        <button aria-label="Open navigation" className="focus-ring rounded-xl p-2 text-slate-300 hover:bg-white/6 hover:text-white lg:hidden" onClick={onMenu}>
           <Menu className="h-5 w-5" />
         </button>
         <button
@@ -525,12 +581,14 @@ function TopBar({
         >
           {collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
         </button>
-        <div className="relative max-w-xl flex-1">
+        <p className="hidden shrink-0 text-sm font-semibold text-slate-300 xl:block">{currentPage}</p>
+        <div className="relative mx-auto min-w-0 max-w-2xl flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <input
             ref={searchRef}
-            className="focus-ring h-10 w-full rounded-2xl border border-white/10 bg-white/[0.035] pl-10 pr-24 text-sm text-white placeholder:text-slate-500 transition hover:border-white/16"
-            placeholder="Search documents, prompts, sessions"
+            aria-label="Search workspace"
+            className="focus-ring h-10 w-full rounded-xl border border-white/10 bg-white/[0.035] pl-10 pr-24 text-sm text-white placeholder:text-slate-500 transition hover:border-white/20"
+            placeholder="Search your workspace"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -541,20 +599,30 @@ function TopBar({
             }}
             onKeyDown={(event) => event.key === "Enter" && submitSearch()}
           />
-          <div className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 rounded-xl border border-white/10 bg-black/25 px-2 py-1 text-[11px] text-slate-500 sm:flex">
+          <div className="shortcut-hint pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2 py-1 text-[11px] text-slate-500 sm:flex">
             <Command className="h-3 w-3" /> K
           </div>
         </div>
-        <Button variant="secondary" className="hidden sm:inline-flex" onClick={() => navigate("/documents?intent=index")}>
+        <button
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-400 transition hover:border-white/20 hover:bg-white/[0.075] hover:text-white"
+          onClick={onToggleTheme}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        >
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
+        <Button variant="secondary" className="topbar-index-action" onClick={() => navigate("/documents?intent=index")}>
           <Sparkles className="h-4 w-4" />
           New Index
         </Button>
         <div className="relative">
         <button
-          className="focus-ring flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] px-2.5 py-2 transition hover:bg-white/[0.06]"
+          aria-label="Open account menu"
+          aria-expanded={profileOpen}
+          className="focus-ring flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.035] px-2 py-1.5 transition hover:bg-white/[0.06]"
           onClick={() => setProfileOpen((value) => !value)}
         >
-          <div className="grid h-8 w-8 place-items-center overflow-hidden rounded-xl bg-sky-300 text-sm font-bold text-slate-950">
+          <div className="grid h-8 w-8 place-items-center overflow-hidden rounded-lg bg-cyan-300 text-sm font-bold text-slate-950">
             {profile.avatar_url ? <img className="h-full w-full object-cover" src={profile.avatar_url} alt="" /> : profile.name.slice(0, 1)}
           </div>
           <div className="hidden leading-tight md:block">
@@ -564,7 +632,7 @@ function TopBar({
           <ChevronDown className="hidden h-4 w-4 text-slate-500 md:block" />
         </button>
         {profileOpen ? (
-          <div className="absolute right-0 top-12 z-40 w-56 rounded-2xl border border-white/10 bg-[#0c0f14] p-2 shadow-2xl">
+          <div className="menu-surface absolute right-0 top-12 z-40 w-56 rounded-xl border border-white/10 p-2 shadow-2xl">
             <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/8" onClick={() => { setProfileOpen(false); navigate("/admin"); }}>
               Admin settings
             </button>
@@ -603,7 +671,9 @@ function DashboardPage() {
     { label: "Documents uploaded", value: dashboardTotal(rawDashboard, ["documents", "total_documents"], documents.length), trend: "Live registry", icon: FileText },
     { label: "Documents indexed", value: dashboardTotal(rawDashboard, ["indexed_documents"], indexed), trend: "Vector-ready", icon: Database },
     { label: "Failed documents", value: rawDashboard.failed_documents ?? failed, trend: failed ? "Needs review" : "Clear", icon: AlertCircle },
-    { label: "Retrieval score", value: retrievalScore ? `${Math.round(retrievalScore * 100)}%` : "N/A", trend: "From recent queries", icon: Gauge },
+    { label: "Retrieval score", value: retrievalScore ? `${Math.round(retrievalScore * 100)}%` : "N/A", trend: retrievalScore ? "Recent average" : "Awaiting queries", icon: Gauge }
+  ];
+  const supportingMetrics = [
     { label: "Chat sessions", value: dashboardTotal(rawDashboard, ["chat_sessions", "sessions"], 0), trend: "Stored sessions", icon: MessageSquare },
     { label: "Retrieved chunks", value: dashboardTotal(rawDashboard, ["retrieved_chunks"], totalChunks), trend: "Indexed chunks", icon: Layers3 },
     { label: "Storage", value: `${(storageBytes / 1024 / 1024).toFixed(1)} MB`, trend: "Object storage", icon: Archive },
@@ -646,17 +716,32 @@ function DashboardPage() {
           <MetricCard key={metric.label} {...metric} />
         ))}
       </div>
+      <Card className="p-4 sm:p-5">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {supportingMetrics.map((metric) => (
+            <div key={metric.label} className="flex items-center gap-3 border-white/8 xl:border-r xl:last:border-r-0">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200">
+                <metric.icon className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">{metric.label}</p>
+                <p className="mt-1 text-lg font-semibold text-white">{metric.value}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
       <div className="grid gap-4 xl:grid-cols-[1.45fr_0.85fr]">
         <Card className="min-h-[360px]">
           <SectionTitle icon={Activity} title="Document analytics" subtitle="Indexed documents and retrieval activity" />
           <div className="mt-6 h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={analytics}>
-                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis dataKey="name" stroke="#64748b" tickLine={false} axisLine={false} />
-                <YAxis stroke="#64748b" tickLine={false} axisLine={false} width={34} />
+                <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                <XAxis dataKey="name" stroke="var(--text-faint)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-faint)" tickLine={false} axisLine={false} width={34} />
                 <Tooltip content={<ChartTooltip />} />
-                <Bar dataKey="documents" fill="#7dd3fc" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="documents" fill="var(--chart-1)" isAnimationActive={false} radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -706,7 +791,7 @@ function DashboardPage() {
               <StatusBadge status={doc.status} />,
               doc.chunks,
               doc.size,
-              doc.updatedAt
+              formatTimestamp(doc.updatedAt)
             ])}
           />
         ) : (
@@ -725,6 +810,7 @@ function DocumentsPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState("");
+  const [pendingRemoval, setPendingRemoval] = useState<{ ids: string[]; label: string } | null>(null);
   const [tags, setTags] = useState("policy, product");
   const [owner, setOwner] = useState("Knowledge Ops");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -744,8 +830,7 @@ function DocumentsPage() {
     matchesSearch([doc.filename, doc.status, doc.version, ...doc.tags], query)
   );
 
-  const runDocumentAction = async (action: "index" | "removeVectors" | "removeDocuments") => {
-    const targetIds = selected.length ? selected : visibleDocs.map((doc) => doc.id);
+  const executeDocumentAction = async (targetIds: string[], action: "index" | "removeVectors" | "removeDocuments") => {
     if (!targetIds.length) return;
     setNotice("");
     try {
@@ -760,20 +845,22 @@ function DocumentsPage() {
     }
   };
 
-  const runSingleDocumentAction = async (docId: string, action: "index" | "removeVectors" | "removeDocuments") => {
-    setSelected([docId]);
-    setOpenActions("");
-    setNotice("");
-    try {
-      if (action === "index") await api.indexDocuments([docId]);
-      if (action === "removeVectors") await api.removeVectors([docId]);
-      if (action === "removeDocuments") await api.removeDocuments([docId]);
-      setNotice("Document action completed.");
-      setSelected([]);
-      docsState.reload();
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Document action failed.");
+  const runDocumentAction = async (action: "index" | "removeVectors" | "removeDocuments") => {
+    if (!selected.length) return;
+    if (action === "removeDocuments") {
+      setPendingRemoval({ ids: selected, label: `${selected.length} selected document${selected.length === 1 ? "" : "s"}` });
+      return;
     }
+    await executeDocumentAction(selected, action);
+  };
+
+  const runSingleDocumentAction = async (doc: DocumentItem, action: "index" | "removeVectors" | "removeDocuments") => {
+    setOpenActions("");
+    if (action === "removeDocuments") {
+      setPendingRemoval({ ids: [doc.id], label: doc.filename });
+      return;
+    }
+    await executeDocumentAction([doc.id], action);
   };
 
   const uploadFiles = async () => {
@@ -846,18 +933,21 @@ function DocumentsPage() {
         <Card className="min-w-0">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <SectionTitle icon={Library} title="Document library" subtitle={`${documents.length} documents in the workspace`} />
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => runDocumentAction("index")} disabled={!visibleDocs.length}>
+            <div className={cn("flex flex-wrap items-center gap-2 transition", !selected.length && "opacity-60")}>
+              <span className="mr-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                {selected.length ? `${selected.length} selected` : "Select files to manage"}
+              </span>
+              <Button variant="secondary" onClick={() => runDocumentAction("index")} disabled={!selected.length}>
                 <Database className="h-4 w-4" />
-                Index selected
+                Index
               </Button>
-              <Button variant="secondary" onClick={() => runDocumentAction("removeVectors")} disabled={!visibleDocs.length}>
+              <Button variant="secondary" onClick={() => runDocumentAction("removeVectors")} disabled={!selected.length}>
                 <Trash2 className="h-4 w-4" />
-                Remove vectors
+                Clear vectors
               </Button>
-              <Button variant="danger" onClick={() => runDocumentAction("removeDocuments")} disabled={!visibleDocs.length}>
+              <Button variant="danger" onClick={() => runDocumentAction("removeDocuments")} disabled={!selected.length}>
                 <Trash2 className="h-4 w-4" />
-                Remove docs
+                Delete
               </Button>
             </div>
           </div>
@@ -872,12 +962,23 @@ function DocumentsPage() {
               { value: "failed", label: "Failed" }
             ]}
           />
-          <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
+          <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="bg-white/[0.035] text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="w-12 px-4 py-3">
-                    <span className="sr-only">Select</span>
+                    <input
+                      aria-label="Select all visible documents"
+                      className="focus-ring h-4 w-4 rounded border-white/20 bg-transparent accent-cyan-300"
+                      type="checkbox"
+                      checked={Boolean(visibleDocs.length) && visibleDocs.every((doc) => selected.includes(doc.id))}
+                      onChange={(event) => {
+                        const visibleIds = visibleDocs.map((doc) => doc.id);
+                        setSelected((current) =>
+                          event.target.checked ? Array.from(new Set([...current, ...visibleIds])) : current.filter((id) => !visibleIds.includes(id))
+                        );
+                      }}
+                    />
                   </th>
                   <th className="px-4 py-3">Document</th>
                   <th className="px-4 py-3">Status</th>
@@ -888,23 +989,26 @@ function DocumentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/8">
-                {visibleDocs.map((doc) => (
+                {docsState.loading ? [0, 1, 2].map((item) => (
+                  <tr key={item}>
+                    <td className="px-4 py-4" colSpan={7}>
+                      <div className="loading-shimmer h-10 rounded-xl" />
+                    </td>
+                  </tr>
+                )) : visibleDocs.map((doc) => (
                   <tr key={doc.id} className="transition hover:bg-white/[0.025]">
                     <td className="px-4 py-4">
-                      <button
+                      <input
                         aria-label={`Select ${doc.filename}`}
-                        className={cn(
-                          "focus-ring grid h-5 w-5 place-items-center rounded-md border transition",
-                          selected.includes(doc.id) ? "border-sky-300 bg-sky-300 text-slate-950" : "border-white/20 text-transparent"
-                        )}
-                        onClick={() =>
+                        className="focus-ring h-4 w-4 rounded border-white/20 bg-transparent accent-cyan-300"
+                        type="checkbox"
+                        checked={selected.includes(doc.id)}
+                        onChange={() =>
                           setSelected((current) =>
                             current.includes(doc.id) ? current.filter((id) => id !== doc.id) : [...current, doc.id]
                           )
                         }
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      </button>
+                      />
                     </td>
                     <td className="px-4 py-4">
                       <DocumentName doc={doc} />
@@ -923,20 +1027,21 @@ function DocumentsPage() {
                     <td className="px-4 py-4 text-slate-300">{doc.size}</td>
                     <td className="relative px-4 py-4 text-right">
                       <button
+                        aria-label={`Open actions for ${doc.filename}`}
                         className="focus-ring rounded-xl p-2 text-slate-400 hover:bg-white/6 hover:text-white"
                         onClick={() => setOpenActions((current) => (current === doc.id ? "" : doc.id))}
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
                       {openActions === doc.id ? (
-                        <div className="absolute right-4 top-12 z-20 w-44 rounded-2xl border border-white/10 bg-[#0c0f14] p-1 shadow-2xl">
-                          <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/8" onClick={() => runSingleDocumentAction(doc.id, "index")}>
+                        <div className="menu-surface absolute right-4 top-12 z-20 w-44 rounded-xl border border-white/10 p-1 shadow-2xl">
+                          <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/8" onClick={() => runSingleDocumentAction(doc, "index")}>
                             Index document
                           </button>
-                          <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/8" onClick={() => runSingleDocumentAction(doc.id, "removeVectors")}>
+                          <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/8" onClick={() => runSingleDocumentAction(doc, "removeVectors")}>
                             Remove vectors
                           </button>
-                          <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-rose-200 hover:bg-rose-400/10" onClick={() => runSingleDocumentAction(doc.id, "removeDocuments")}>
+                          <button className="w-full rounded-xl px-3 py-2 text-left text-sm text-rose-200 hover:bg-rose-400/10" onClick={() => runSingleDocumentAction(doc, "removeDocuments")}>
                             Remove document
                           </button>
                         </div>
@@ -947,7 +1052,7 @@ function DocumentsPage() {
               </tbody>
             </table>
           </div>
-          {!visibleDocs.length ? (
+          {!docsState.loading && !visibleDocs.length ? (
             <div className="mt-5">
               <EmptyState
                 icon={FileText}
@@ -958,6 +1063,18 @@ function DocumentsPage() {
           ) : null}
         </Card>
       </div>
+      <ConfirmDialog
+        open={Boolean(pendingRemoval)}
+        title="Delete documents?"
+        description={`${pendingRemoval?.label || "This document"} will be removed from the workspace. This cannot be undone.`}
+        confirmLabel="Delete permanently"
+        onCancel={() => setPendingRemoval(null)}
+        onConfirm={async () => {
+          const ids = pendingRemoval?.ids || [];
+          setPendingRemoval(null);
+          await executeDocumentAction(ids, "removeDocuments");
+        }}
+      />
     </div>
   );
 }
@@ -970,6 +1087,7 @@ function ChatPage() {
   const [topK, setTopK] = useState(6);
   const [threshold, setThreshold] = useState(0.72);
   const [sourceMode, setSourceMode] = useState("balanced");
+  const [mobilePanel, setMobilePanel] = useState<"history" | "settings" | "">("");
   const [loading, setLoading] = useState(false);
   const sessionsState = useAsyncData<any[]>(
     async () => {
@@ -1060,34 +1178,55 @@ function ChatPage() {
   };
 
   return (
-    <div className="grid min-h-[calc(100vh-112px)] gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
-      <Card className="hidden xl:block">
+    <div className="space-y-4">
+      <div className="flex gap-2 2xl:hidden">
+        <Button variant="secondary" className="min-w-0 flex-1" onClick={() => setMobilePanel((current) => current === "history" ? "" : "history")}>
+          <History className="h-4 w-4" />
+          History
+        </Button>
+        <Button variant="secondary" className="min-w-0 flex-1" onClick={() => setMobilePanel((current) => current === "settings" ? "" : "settings")}>
+          <SlidersHorizontal className="h-4 w-4" />
+          Settings
+        </Button>
+        <Button size="icon" ariaLabel="Start a new chat" onClick={newChat}>
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+      {mobilePanel === "history" ? (
+        <Card className="2xl:hidden">
+          <div className="mb-4 flex items-center justify-between">
+            <SectionTitle icon={History} title="Chat history" subtitle="Resume an earlier conversation" />
+            <Button size="icon" variant="secondary" ariaLabel="Start a new chat" onClick={newChat}>
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+          <SessionList sessions={sessions} activeSession={activeSession} onLoad={loadSession} />
+        </Card>
+      ) : null}
+      {mobilePanel === "settings" ? (
+        <Card className="2xl:hidden">
+          <SectionTitle icon={SlidersHorizontal} title="Retrieval settings" subtitle="Tune source selection for this chat" />
+          <RetrievalControls
+            topK={topK}
+            threshold={threshold}
+            sourceMode={sourceMode}
+            onTopK={setTopK}
+            onThreshold={setThreshold}
+            onSourceMode={setSourceMode}
+          />
+        </Card>
+      ) : null}
+      <div className="grid min-h-[calc(100vh-140px)] gap-4 2xl:grid-cols-[248px_minmax(0,1fr)_304px]">
+      <Card className="hidden 2xl:block">
         <div className="mb-5 flex items-center justify-between">
           <SectionTitle icon={History} title="Chat history" />
           <Button size="icon" variant="secondary" ariaLabel="New chat" onClick={newChat}>
             <Plus className="h-4 w-4" />
           </Button>
         </div>
-        <div className="space-y-2">
-          {sessions.length ? sessions.map((session, index) => {
-            const sessionId = String(session.id || session.session_id || "");
-            return (
-            <button
-              key={sessionId || index}
-              className={cn(
-                "focus-ring w-full rounded-2xl px-3 py-3 text-left text-sm transition",
-                activeSession === sessionId ? "bg-white text-slate-950" : "text-slate-400 hover:bg-white/6 hover:text-white"
-              )}
-              onClick={() => loadSession(session)}
-            >
-              <span className="block truncate font-medium">{session.title || session.name || session.query || "Untitled session"}</span>
-              <span className="mt-1 block text-xs text-slate-600">{session.message_count || session.interactions || 0} messages</span>
-            </button>
-            );
-          }) : <EmptyState icon={MessageSquare} title="No chat sessions" description="Saved sessions appear here after a chat is created." />}
-        </div>
+        <SessionList sessions={sessions} activeSession={activeSession} onLoad={loadSession} />
       </Card>
-      <Card className="flex min-h-[720px] flex-col overflow-hidden p-0">
+      <Card className="min-w-0 flex min-h-[680px] flex-col overflow-hidden p-0">
         <div className="border-b border-white/10 p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <SectionTitle icon={Bot} title="AI chat workspace" subtitle="Grounded answers with visible retrieval provenance" />
@@ -1114,7 +1253,7 @@ function ChatPage() {
             </div>
           ) : null}
         </div>
-        <div className="border-t border-white/10 bg-[#0b0d12]/95 p-4">
+        <div className="composer-footer border-t border-white/10 p-4">
           <div className="mb-3 flex flex-wrap gap-2">
             {["Summarize the latest roadmap risks", "Which documents mention API limits?", "Show sources for onboarding claims"].map(
               (suggestion) => (
@@ -1131,24 +1270,86 @@ function ChatPage() {
           <ChatComposer value={input} onChange={setInput} onSubmit={sendMessage} loading={loading} />
         </div>
       </Card>
-      <Card>
+      <Card className="hidden 2xl:block">
         <SectionTitle icon={SlidersHorizontal} title="Retrieval settings" subtitle="Tune source selection for this chat" />
-        <div className="mt-6 space-y-6">
-          <RangeControl label="Top K" value={topK} min={2} max={12} step={1} onChange={setTopK} />
-          <RangeControl label="Score threshold" value={threshold} min={0.1} max={0.95} step={0.01} onChange={setThreshold} />
-          <Select label="Source mode" value={sourceMode} onChange={(event) => setSourceMode(event.target.value)}>
-            <option value="balanced">Balanced</option>
-            <option value="strict">Strict citations</option>
-            <option value="broad">Broad recall</option>
-          </Select>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-            <p className="text-sm font-medium text-white">Answer provenance</p>
-            <p className="mt-2 text-sm leading-6 text-slate-400">
-              Every response can expose retrieved chunks, source confidence, and document origin for inspection.
-            </p>
-          </div>
-        </div>
+        <RetrievalControls
+          topK={topK}
+          threshold={threshold}
+          sourceMode={sourceMode}
+          onTopK={setTopK}
+          onThreshold={setThreshold}
+          onSourceMode={setSourceMode}
+        />
       </Card>
+      </div>
+    </div>
+  );
+}
+
+function SessionList({
+  sessions,
+  activeSession,
+  onLoad
+}: {
+  sessions: any[];
+  activeSession: string;
+  onLoad: (session: any) => void;
+}) {
+  if (!sessions.length) return <EmptyState icon={MessageSquare} title="No chat sessions" description="Saved sessions appear here after a chat is created." />;
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
+      {sessions.map((session, index) => {
+        const sessionId = String(session.id || session.session_id || "");
+        return (
+          <button
+            key={sessionId || index}
+            className={cn(
+              "focus-ring w-full rounded-xl border px-3 py-3 text-left text-sm transition",
+              activeSession === sessionId
+                ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-50"
+                : "border-transparent text-slate-400 hover:border-white/8 hover:bg-white/[0.045] hover:text-white"
+            )}
+            onClick={() => onLoad(session)}
+          >
+            <span className="block truncate font-medium">{session.title || session.name || session.query || "Untitled session"}</span>
+            <span className="mt-1 block text-xs text-slate-500">{session.message_count || session.interactions || 0} messages</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function RetrievalControls({
+  topK,
+  threshold,
+  sourceMode,
+  onTopK,
+  onThreshold,
+  onSourceMode
+}: {
+  topK: number;
+  threshold: number;
+  sourceMode: string;
+  onTopK: (value: number) => void;
+  onThreshold: (value: number) => void;
+  onSourceMode: (value: string) => void;
+}) {
+  return (
+    <div className="mt-6 space-y-6">
+      <RangeControl label="Top K" value={topK} min={2} max={12} step={1} onChange={onTopK} />
+      <RangeControl label="Score threshold" value={threshold} min={0.1} max={0.95} step={0.01} onChange={onThreshold} />
+      <Select label="Source mode" value={sourceMode} onChange={(event) => onSourceMode(event.target.value)}>
+        <option value="balanced">Balanced</option>
+        <option value="strict">Strict citations</option>
+        <option value="broad">Broad recall</option>
+      </Select>
+      <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.055] p-4">
+        <p className="text-sm font-medium text-cyan-50">Answer provenance</p>
+        <p className="mt-2 text-sm leading-6 text-slate-400">
+          Responses expose retrieved chunks, source confidence, and document origin for inspection.
+        </p>
+      </div>
     </div>
   );
 }
@@ -1263,12 +1464,12 @@ function AdminPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-medium text-white">{key.label || `${key.provider} key`}</p>
-                    <p className="mt-1 text-sm text-slate-500">{key.provider} · {key.created_at || key.createdAt || "Recently"}</p>
+                    <p className="mt-1 text-sm text-slate-500">{key.provider} | {formatTimestamp(key.created_at || key.createdAt)}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge tone={key.is_active || key.active ? "success" : "neutral"}>{key.is_active || key.active ? "Active" : "Stored"}</Badge>
                     {key.id ? (
-                      <button className="focus-ring rounded-xl p-2 text-slate-500 hover:bg-rose-400/10 hover:text-rose-200" onClick={() => deleteKey(String(key.id))}>
+                      <button aria-label={`Remove ${key.label || `${key.provider} key`}`} className="focus-ring rounded-xl p-2 text-slate-500 hover:bg-rose-400/10 hover:text-rose-200" onClick={() => deleteKey(String(key.id))}>
                         <Trash2 className="h-4 w-4" />
                       </button>
                     ) : null}
@@ -1357,14 +1558,14 @@ function PromptLibraryPage() {
             </div>
             <Badge>
               <Clock3 className="h-3.5 w-3.5" />
-              {active.updatedAt}
+              {formatTimestamp(active.updatedAt)}
             </Badge>
           </div>
           <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
             <Textarea label="Prompt editor" value={body} onChange={(event) => setBody(event.target.value)} rows={18} />
             <div className="space-y-4">
               <Textarea label="Change note" value={note} onChange={(event) => setNote(event.target.value)} rows={5} />
-              <Card className="p-4">
+              <Card className="inset-panel p-4">
                 <SectionTitle icon={History} title="Version history" />
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2 text-sm text-slate-300">
@@ -1473,8 +1674,8 @@ function ApiConnectionPage() {
 
 function BrandMark() {
   return (
-    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-950 shadow-lg shadow-sky-950/20">
-      <Brain className="h-5 w-5" />
+    <div className="brand-mark grid h-10 w-10 shrink-0 place-items-center rounded-xl text-slate-950">
+      <Brain className="h-5 w-5" strokeWidth={2.4} />
     </div>
   );
 }
@@ -1493,9 +1694,9 @@ function PageHeader({
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
       <div className="max-w-3xl">
-        <p className="text-sm font-medium text-sky-300">{eyebrow}</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">{title}</h1>
-        <p className="mt-3 text-base leading-7 text-slate-400">{description}</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-cyan-300">{eyebrow}</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-[34px]">{title}</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400 sm:text-base">{description}</p>
       </div>
       {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
     </div>
@@ -1503,7 +1704,7 @@ function PageHeader({
 }
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <section className={cn("premium-card rounded-3xl p-5", className)}>{children}</section>;
+  return <section className={cn("premium-card rounded-[20px] p-5 sm:p-6", className)}>{children}</section>;
 }
 
 function Button({
@@ -1522,11 +1723,11 @@ function Button({
     <button
       aria-label={ariaLabel}
       className={cn(
-        "focus-ring inline-flex items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition active:scale-[0.99] disabled:opacity-60",
+        "focus-ring inline-flex items-center justify-center gap-2 rounded-xl text-sm font-semibold transition active:scale-[0.99] disabled:opacity-50",
         size === "icon" ? "h-10 w-10" : "h-10 px-4",
-        variant === "primary" && "bg-white text-slate-950 shadow-lg shadow-sky-950/20 hover:bg-sky-100",
-        variant === "secondary" && "border border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/8 hover:text-white",
-        variant === "danger" && "border border-rose-300/20 bg-rose-400/10 text-rose-200 hover:bg-rose-400/15",
+        variant === "primary" && "button-primary bg-cyan-300 text-slate-950 hover:bg-cyan-200",
+        variant === "secondary" && "button-secondary border border-white/10 bg-white/[0.035] text-slate-200 hover:border-white/20 hover:bg-white/[0.075] hover:text-white",
+        variant === "danger" && "button-danger border border-rose-300/20 bg-rose-400/10 text-rose-200 hover:bg-rose-400/15",
         className
       )}
       {...props}
@@ -1542,7 +1743,7 @@ function Input({ label, className = "", ...props }: React.InputHTMLAttributes<HT
       <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
       <input
         className={cn(
-          "focus-ring h-11 w-full rounded-2xl border border-white/10 bg-black/20 px-3 text-sm text-white placeholder:text-slate-600 transition hover:border-white/16",
+          "field-control focus-ring h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white placeholder:text-slate-500 transition hover:border-white/20",
           className
         )}
         {...props}
@@ -1556,7 +1757,7 @@ function Select({ label, children, ...props }: React.SelectHTMLAttributes<HTMLSe
     <label className="block">
       <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
       <select
-        className="focus-ring h-11 w-full rounded-2xl border border-white/10 bg-black/20 px-3 text-sm text-white transition hover:border-white/16"
+        className="field-control focus-ring h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white transition hover:border-white/20"
         {...props}
       >
         {children}
@@ -1570,7 +1771,7 @@ function Textarea({ label, ...props }: React.TextareaHTMLAttributes<HTMLTextArea
     <label className="block">
       <span className="mb-2 block text-sm font-medium text-slate-300">{label}</span>
       <textarea
-        className="focus-ring w-full resize-y rounded-2xl border border-white/10 bg-black/20 p-3 font-mono text-sm leading-6 text-white placeholder:text-slate-600 transition hover:border-white/16"
+        className="field-control focus-ring w-full resize-y rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-sm leading-6 text-white placeholder:text-slate-500 transition hover:border-white/20"
         {...props}
       />
     </label>
@@ -1585,11 +1786,11 @@ function MetricCard({ label, value, trend, icon: Icon }: { label: string; value:
           <p className="text-sm text-slate-500">{label}</p>
           <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{value}</p>
         </div>
-        <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white/[0.055] text-sky-300">
+        <div className="accent-icon grid h-10 w-10 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200">
           <Icon className="h-5 w-5" />
         </div>
       </div>
-      <p className="mt-4 text-sm text-slate-400">{trend}</p>
+      <p className="mt-4 text-xs font-medium uppercase tracking-[0.1em] text-slate-500">{trend}</p>
     </Card>
   );
 }
@@ -1598,7 +1799,7 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
         tone === "neutral" && "border-white/10 bg-white/[0.04] text-slate-300",
         tone === "success" && "border-emerald-300/20 bg-emerald-400/10 text-emerald-300",
         tone === "warn" && "border-amber-300/20 bg-amber-400/10 text-amber-200"
@@ -1610,7 +1811,7 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
 }
 
 function TagChip({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-full bg-sky-300/10 px-2.5 py-1 text-xs font-medium text-sky-200">{children}</span>;
+  return <span className="tag-chip rounded-full border border-cyan-300/10 bg-cyan-300/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">{children}</span>;
 }
 
 function Tabs({
@@ -1625,13 +1826,13 @@ function Tabs({
   className?: string;
 }) {
   return (
-    <div className={cn("flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-black/20 p-1", className)}>
+    <div className={cn("tabs-shell flex flex-wrap gap-1 rounded-xl border border-white/10 bg-black/20 p-1", className)}>
       {items.map((item) => (
         <button
           key={item.value}
           className={cn(
-            "focus-ring rounded-xl px-3 py-2 text-sm font-medium transition",
-            value === item.value ? "bg-white text-slate-950" : "text-slate-400 hover:bg-white/6 hover:text-white"
+            "focus-ring rounded-lg px-3 py-2 text-sm font-medium transition",
+            value === item.value ? "tab-active bg-cyan-300 text-slate-950" : "text-slate-400 hover:bg-white/6 hover:text-white"
           )}
           onClick={() => onChange(item.value)}
         >
@@ -1647,7 +1848,7 @@ function StatusIndicator({ status }: { status: "online" | "offline" | "warn" }) 
     <span
       className={cn(
         "inline-flex h-2.5 w-2.5 rounded-full",
-        status === "online" && "bg-emerald-300 shadow-[0_0_18px_rgba(110,231,183,0.75)]",
+        status === "online" && "status-online bg-emerald-300",
         status === "warn" && "bg-amber-300",
         status === "offline" && "bg-rose-300"
       )}
@@ -1663,11 +1864,11 @@ function StatusBadge({ status }: { status: Status }) {
 function SectionTitle({ icon: Icon, title, subtitle }: { icon: any; title: string; subtitle?: string }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-white/[0.055] text-sky-300">
+      <div className="accent-icon mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200">
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0">
-        <h2 className="text-base font-semibold text-white">{title}</h2>
+        <h2 className="text-sm font-semibold text-white sm:text-base">{title}</h2>
         {subtitle ? <p className="mt-1 text-sm text-slate-500">{subtitle}</p> : null}
       </div>
     </div>
@@ -1676,12 +1877,12 @@ function SectionTitle({ icon: Icon, title, subtitle }: { icon: any; title: strin
 
 function EmptyState({ icon: Icon, title, description }: { icon: any; title: string; description: string }) {
   return (
-    <div className="rounded-3xl border border-dashed border-white/12 bg-white/[0.025] p-8 text-center">
-      <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-white/[0.055] text-sky-300">
+    <div className="empty-state rounded-2xl border border-dashed border-white/12 bg-white/[0.02] p-7 text-center">
+      <div className="accent-icon mx-auto grid h-12 w-12 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200">
         <Icon className="h-6 w-6" />
       </div>
       <h3 className="mt-4 font-semibold text-white">{title}</h3>
-      <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-500">{description}</p>
+      <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-400">{description}</p>
     </div>
   );
 }
@@ -1689,12 +1890,56 @@ function EmptyState({ icon: Icon, title, description }: { icon: any; title: stri
 function InlineNotice({ tone, message }: { tone: "success" | "warn"; message: string }) {
   return (
     <div
+      role="status"
+      aria-live="polite"
       className={cn(
-        "rounded-2xl border px-4 py-3 text-sm",
-        tone === "success" ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" : "border-amber-300/20 bg-amber-400/10 text-amber-100"
+        "rounded-xl border px-4 py-3 text-sm",
+        tone === "success" ? "notice-success border-emerald-300/20 bg-emerald-400/10 text-emerald-200" : "notice-warn border-amber-300/20 bg-amber-400/10 text-amber-100"
       )}
     >
       {message}
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel,
+  onCancel,
+  onConfirm
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[70] grid place-items-center bg-black/70 px-4 backdrop-blur-sm" role="presentation" onMouseDown={onCancel}>
+      <div
+        aria-describedby="confirm-dialog-description"
+        aria-labelledby="confirm-dialog-title"
+        aria-modal="true"
+        className="premium-card w-full max-w-md rounded-[20px] p-6 shadow-2xl"
+        role="dialog"
+        tabIndex={-1}
+        onKeyDown={(event) => event.key === "Escape" && onCancel()}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-rose-400/10 text-rose-200">
+          <AlertCircle className="h-5 w-5" />
+        </div>
+        <h2 className="mt-5 text-xl font-semibold text-white" id="confirm-dialog-title">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-400" id="confirm-dialog-description">{description}</p>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button autoFocus variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button variant="danger" onClick={onConfirm}>{confirmLabel}</Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1717,7 +1962,7 @@ function UploadDropzone({
   return (
     <Card>
       <div
-        className="rounded-3xl border border-dashed border-white/16 bg-white/[0.025] p-7 text-center transition hover:border-sky-300/40 hover:bg-sky-300/[0.035]"
+        className="dropzone rounded-2xl border border-dashed border-white/16 bg-white/[0.025] p-7 text-center transition hover:border-cyan-300/50 hover:bg-cyan-300/[0.035]"
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
           event.preventDefault();
@@ -1731,7 +1976,7 @@ function UploadDropzone({
           className="hidden"
           onChange={(event) => onFiles(Array.from(event.target.files || []))}
         />
-        <div className="mx-auto grid h-14 w-14 place-items-center rounded-3xl bg-white text-slate-950">
+        <div className="dropzone-icon mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-cyan-300 text-slate-950">
           <UploadCloud className="h-6 w-6" />
         </div>
         <h2 className="mt-5 text-lg font-semibold text-white">Drop documents to upload</h2>
@@ -1743,7 +1988,7 @@ function UploadDropzone({
       <div className="mt-5 space-y-3">
         {files.length ? (
           files.map((file) => (
-            <div key={`${file.name}-${file.size}`} className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+            <div key={`${file.name}-${file.size}`} className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-white">{file.name}</p>
@@ -1751,9 +1996,7 @@ function UploadDropzone({
                 </div>
                 <Badge>Queued</Badge>
               </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-                <div className="h-full w-2/3 rounded-full bg-sky-300" />
-              </div>
+              <p className="mt-2 text-xs text-slate-500">Ready to upload</p>
             </div>
           ))
         ) : (
@@ -1785,9 +2028,10 @@ function ChatComposer({
   loading: boolean;
 }) {
   return (
-    <div className="flex items-end gap-3 rounded-3xl border border-white/10 bg-black/25 p-2">
+    <div className="chat-composer flex items-end gap-3 rounded-2xl border border-white/10 bg-black/25 p-2">
       <textarea
-        className="focus-ring max-h-36 min-h-12 flex-1 resize-none rounded-2xl bg-transparent px-3 py-3 text-sm leading-6 text-white placeholder:text-slate-600"
+        aria-label="Ask MindMesh"
+        className="focus-ring max-h-36 min-h-12 flex-1 resize-none rounded-xl bg-transparent px-3 py-3 text-sm leading-6 text-white placeholder:text-slate-500"
         placeholder="Ask across your indexed knowledge..."
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -1809,12 +2053,12 @@ function ChatBubble({ message }: { message: Message }) {
   const assistant = message.role === "assistant";
   return (
     <div className={cn("flex", assistant ? "justify-start" : "justify-end")}>
-      <div className={cn("max-w-3xl rounded-3xl p-4", assistant ? "border border-white/10 bg-white/[0.04]" : "bg-white text-slate-950")}>
+      <div className={cn("max-w-3xl rounded-2xl p-4", assistant ? "assistant-bubble border border-white/10 bg-white/[0.04]" : "user-bubble bg-cyan-300 text-slate-950")}>
         <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
         {assistant && message.sources?.length ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             {message.sources.map((source) => (
-              <div key={`${source.title}-${source.page}`} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+              <div key={`${source.title}-${source.page}`} className="source-card rounded-xl border border-white/10 bg-black/20 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <p className="line-clamp-2 text-sm font-medium text-white">{source.title}</p>
                   <Badge>{source.score ? source.score.toFixed(2) : "N/A"}</Badge>
@@ -1832,9 +2076,10 @@ function ChatBubble({ message }: { message: Message }) {
 function PromptCard({ prompt, active, onClick }: { prompt: PromptItem; active: boolean; onClick: () => void }) {
   return (
     <button
+      aria-pressed={active}
       className={cn(
-        "focus-ring w-full rounded-2xl border p-4 text-left transition",
-        active ? "border-sky-300/50 bg-sky-300/10" : "border-white/10 bg-white/[0.025] hover:bg-white/[0.05]"
+        "focus-ring w-full rounded-xl border p-4 text-left transition",
+        active ? "prompt-card-active border-cyan-300/50 bg-cyan-300/10" : "prompt-card-idle border-white/10 bg-white/[0.025] hover:bg-white/[0.05]"
       )}
       onClick={onClick}
     >
@@ -1896,7 +2141,7 @@ function RangeControl({
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full accent-sky-300"
+        className="w-full accent-cyan-300"
       />
     </label>
   );
@@ -1904,7 +2149,7 @@ function RangeControl({
 
 function DataTable({ columns, rows }: { columns: string[]; rows: React.ReactNode[][] }) {
   return (
-    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
+    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10">
       <table className="w-full min-w-[680px] text-left text-sm">
         <thead className="bg-white/[0.035] text-xs uppercase tracking-wide text-slate-500">
           <tr>{columns.map((column) => <th key={column} className="px-4 py-3">{column}</th>)}</tr>
@@ -1928,7 +2173,7 @@ function DataTable({ columns, rows }: { columns: string[]; rows: React.ReactNode
 function DocumentName({ doc }: { doc: DocumentItem }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/[0.055] text-sky-300">
+      <div className="accent-icon grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200">
         <FileText className="h-5 w-5" />
       </div>
       <div className="min-w-0">
@@ -1941,7 +2186,7 @@ function DocumentName({ doc }: { doc: DocumentItem }) {
 
 function DocumentRowCompact({ doc }: { doc: DocumentItem }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">
+    <div className="subtle-panel rounded-2xl border border-white/10 bg-white/[0.025] p-3">
       <div className="flex items-start justify-between gap-3">
         <DocumentName doc={doc} />
         <StatusBadge status={doc.status} />
@@ -1959,7 +2204,7 @@ function DistributionCard({ title, data }: { title: string; data: { name: string
         <div className="h-32">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={data} dataKey="value" innerRadius={34} outerRadius={58} paddingAngle={4}>
+              <Pie data={data} dataKey="value" innerRadius={34} isAnimationActive={false} outerRadius={58} paddingAngle={4}>
                 {data.map((entry, index) => (
                   <Cell key={entry.name} fill={palette[index % palette.length]} />
                 ))}
@@ -1986,7 +2231,7 @@ function DistributionCard({ title, data }: { title: string; data: { name: string
 function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#0c0f14] p-3 shadow-xl">
+    <div className="menu-surface rounded-xl border border-white/10 p-3 shadow-xl">
       <p className="mb-2 text-sm font-medium text-white">{label}</p>
       {payload.map((item: any) => (
         <p key={item.dataKey} className="text-xs text-slate-400">
