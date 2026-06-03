@@ -1,0 +1,164 @@
+name: mindmesh
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mm_poc}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-mm_poc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-mmpoc}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY"; do
+          sleep 2
+        done
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      APP_NAME: ${APP_NAME:-MindMesh API}
+      API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MM_POC_LOG_MAX_BYTES: ${MM_POC_LOG_MAX_BYTES:-10485760}
+      MM_POC_LOG_BACKUP_COUNT: ${MM_POC_LOG_BACKUP_COUNT:-5}
+      ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:-}
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-mm_poc}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_SSLMODE: disable
+      POSTGRES_CONNECT_TIMEOUT: ${POSTGRES_CONNECT_TIMEOUT:-5}
+
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-mmpoc}
+      S3_PREFIX: ${S3_PREFIX:-pdf/}
+      S3_REGION_NAME: ${S3_REGION_NAME:-us-east-1}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+      S3_USE_SSL: "false"
+      S3_VERIFY_SSL: "false"
+
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-200}
+      RETRIEVER_TOP_K: ${RETRIEVER_TOP_K:-4}
+      RETRIEVER_SCORE_THRESHOLD: ${RETRIEVER_SCORE_THRESHOLD:-0.0}
+
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      TAVILY_SEARCH_DEPTH: ${TAVILY_SEARCH_DEPTH:-basic}
+      TAVILY_MAX_RESULTS: ${TAVILY_MAX_RESULTS:-5}
+      TAVILY_INCLUDE_ANSWER: ${TAVILY_INCLUDE_ANSWER:-true}
+      TAVILY_INCLUDE_RAW_CONTENT: ${TAVILY_INCLUDE_RAW_CONTENT:-false}
+
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION_NAME: ${QDRANT_COLLECTION_NAME:-documents}
+      QDRANT_DISTANCE: ${QDRANT_DISTANCE:-COSINE}
+      QDRANT_RECREATE_COLLECTION: ${QDRANT_RECREATE_COLLECTION:-false}
+
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-sentence-transformers/all-MiniLM-L6-v2}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+      CONTENT_PAYLOAD_KEY: ${CONTENT_PAYLOAD_KEY:-page_content}
+      METADATA_PAYLOAD_KEY: ${METADATA_PAYLOAD_KEY:-metadata}
+
+      DOCUMENT_TAGS: ${DOCUMENT_TAGS:-}
+      DOCUMENT_APPLICABLE_DATA: ${DOCUMENT_APPLICABLE_DATA:-}
+      DOCUMENT_VERSION: ${DOCUMENT_VERSION:-}
+      DOCUMENT_REGISTRY_PATH: ${DOCUMENT_REGISTRY_PATH:-data/document_registry.json}
+
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-https://api.groq.com/openai/v1}
+      GROQ_MAX_TOKENS: ${GROQ_MAX_TOKENS:-1024}
+      GROQ_TEMPERATURE: ${GROQ_TEMPERATURE:-0}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - api_logs:/app/logs
+      - embedding_cache:/app/models/embedding
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      VITE_API_BASE_URL: /api/v1
+      VITE_API_PROXY_TARGET: http://api:8000
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  minio_data:
+  api_logs:
+  embedding_cache:

@@ -1,104 +1,175 @@
-# MM POC RAG API
+# MindMesh
 
-FastAPI service for indexing PDF, DOCX, PPT/PPTX, and text files from S3-compatible storage into Qdrant and generating RAG answers.
+MindMesh is a local RAG workspace for uploading documents, indexing them, and chatting with them through a FastAPI backend and React frontend.
 
-## Layout
+It uses:
+
+- FastAPI for the API
+- React + Vite for the UI
+- Postgres for users, documents, chat history, prompts, and AI settings
+- MinIO/S3 for uploaded files
+- Qdrant for vectors
+- Hugging Face embeddings
+- Groq, OpenAI, Gemini, or vLLM for answer generation
+- Optional Tavily web search
+
+## Quick Start
+
+MindMesh includes a Compose file, so the full local stack can run with one command.
+
+### 1. Clone the repo
+
+```powershell
+git clone https://github.com/Huzaifa-dev99/mindmesh.git
+cd mindmesh
+```
+
+### 2. Create your `.env`
+
+```powershell
+Copy-Item .env.example .env
+```
+
+On macOS/Linux:
+
+```bash
+cp .env.example .env
+```
+
+Add at least one LLM key. Groq is the simplest first option:
+
+```env
+GROQ_API_KEY=your-groq-api-key
+```
+
+You can also add provider keys later from the React admin UI.
+
+### 3. Start everything
+
+```powershell
+docker compose up --build
+```
+
+Open:
 
 ```text
-app/
-  api/v1/          HTTP routes and request/response schemas
-  core/            configuration, logging, storage, serialization, external clients
-  ml/              embedding model loading and local cache
-  services/        indexing, preprocessing, retrieval, generation, registry logic
-data/              runtime registry state
-legacy/            old experiments kept out of the runtime path
-logs/              rotating structured application logs
-models/embedding/  locally cached embedding models
-scripts/           command-line helpers
-tests/             lightweight regression tests for core helpers
+App:       http://127.0.0.1:5173
+API docs:  http://127.0.0.1:8000/docs
+Health:    http://127.0.0.1:8000/api/v1/health
+MinIO UI:  http://127.0.0.1:9001
+Qdrant:    http://127.0.0.1:6333
 ```
 
-## Run
+Stop the stack:
 
 ```powershell
-python run.py
+docker compose down
 ```
 
-That single command creates/uses `.venv`, installs `requirements.txt` when it changes, and starts the FastAPI server.
-If port `8000` is unavailable, the runner automatically uses the next open port and prints the actual docs URL.
-
-To run the Streamlit chat frontend and the FastAPI backend together:
+Remove all local Compose data:
 
 ```powershell
-python run.py --ui
+docker compose down -v
 ```
 
-To run the React frontend:
+## First Use
+
+1. Open `http://127.0.0.1:5173`.
+2. Upload documents from the document library.
+3. Index the uploaded documents.
+4. Ask questions in chat.
+
+Supported document types:
+
+```text
+.pdf, .docx, .ppt, .pptx, .txt, .md
+```
+
+The first indexing run may download the embedding model. With Compose, it is cached in the `embedding_cache` Docker volume.
+
+## Compose Services
+
+`compose.yml` starts:
+
+- `postgres`
+- `qdrant`
+- `minio`
+- `minio-init`
+- `api`
+- `frontend`
+
+Useful checks:
+
+```powershell
+docker compose ps
+docker compose logs api
+docker compose logs frontend
+docker compose config
+```
+
+## Local Development Without App Containers
+
+You can run only the support services in Docker:
+
+```powershell
+docker compose up -d postgres qdrant minio minio-init
+```
+
+Then run the app from your machine:
 
 ```powershell
 python run.py --fe
 ```
 
-The React app runs at `http://127.0.0.1:5173`. The runner installs frontend packages when needed, starts FastAPI, and points the Vite `/api` proxy at the actual backend port.
+The runner creates `.venv`, installs Python dependencies, starts FastAPI, installs frontend packages when needed, and starts Vite.
 
-For production-like API serving without the Streamlit debug UI:
+Other runner commands:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python run.py        # API only
+python run.py --ui   # API + legacy Streamlit UI
 ```
 
-The Streamlit frontend has two pages:
-
-- `Chat`: chat sessions grouped by date, retrieval settings, and the chat screen
-- `Documents`: document upload, document status list, selected indexing, document removal, and Qdrant vector removal
-
-Document uploads collect editable filename and tags per file. The backend stores tags as searchable metadata, assigns version `01` for the first upload of a filename, creates the next version when content changes, and reports duplicates when identical content already exists. PDF, DOCX, PPT, and PPTX files are parsed through Docling; TXT/MD files use lightweight text splitting. Indexed Qdrant metadata includes the source filename, file type, and page number when the parser provides one.
-
-API docs:
+## Important Files
 
 ```text
-http://127.0.0.1:8000/docs
+compose.yml             Full local stack
+Dockerfile.api          Backend image
+frontend/Dockerfile     Frontend image
+app/                    FastAPI backend
+frontend/               React frontend
+legacy/                 Legacy Streamlit UI
+scripts/                CLI helpers
+tests/                  Python tests
+.env.example            Environment template
 ```
 
-## Endpoints
+## Configuration Notes
 
-- `GET /api/v1/health`
-- `POST /api/v1/index`
-- `POST /api/v1/generate`
-- `GET /api/v1/documents`
-- `POST /api/v1/documents/sync`
-- `POST /api/v1/documents/upload`
-- `POST /api/v1/documents/index`
-- `POST /api/v1/documents/remove-vectors`
-- `POST /api/v1/documents/remove`
-- `GET /api/v1/chat/sessions`
-- `GET /api/v1/chat/sessions/{session_id}/interactions`
+For Compose, most infrastructure values are already wired to container service names. Usually you only need to set:
 
-## Optional CLI Helpers
+```env
+GROQ_API_KEY=
+TAVILY_API_KEY=
+ADMIN_SECRET_KEY=
+```
+
+`TAVILY_API_KEY` is optional and only needed for web search.
+
+`ADMIN_SECRET_KEY` is optional, but recommended before saving provider keys in the admin UI. Generate one with:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/index_documents.py
-.\.venv\Scripts\python.exe scripts/generate_answer.py
-.\.venv\Scripts\python.exe scripts/serve.py
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-## Validation
+## Troubleshooting
 
-Run the lightweight regression suite:
+- **No LLM response:** set `GROQ_API_KEY` or add a provider key in the admin UI.
+- **Web search fails:** set `TAVILY_API_KEY` or turn web search off in chat.
+- **Port conflict:** change `APP_PORT` or `FRONTEND_PORT` in `.env`.
+- **Fresh indexing is slow:** the embedding model is downloading for the first time.
+- **Need a clean reset:** run `docker compose down -v`, then `docker compose up --build`.
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover
-```
+## Security
 
-Run a syntax/import check across the project:
-
-```powershell
-$files = @('main.py','run.py') + (Get-ChildItem -Path app,legacy,scripts,tests -Recurse -Filter *.py | ForEach-Object { $_.FullName })
-.\.venv\Scripts\python.exe -m py_compile $files
-```
-
-## Configuration
-
-Copy `.env.example` to `.env` and set your MinIO, Qdrant, embedding, Groq, and Postgres values. Document registry and chat interactions are stored in Postgres under the `rag` schema.
-
-Groq is optional when you configure a saved OpenAI-compatible, Gemini, or vLLM provider through the admin UI. Logs are written as structured JSON to `logs/app.log` and `logs/errors.log`; rotate size and backup count with `MM_POC_LOG_MAX_BYTES` and `MM_POC_LOG_BACKUP_COUNT`.
+MindMesh is intended as a local development workspace. Do not expose it publicly without adding real authentication, HTTPS, secret management, and production hardening.

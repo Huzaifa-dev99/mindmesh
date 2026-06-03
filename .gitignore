@@ -12,3 +12,5 @@ models/embedding/
 logs/*.log
 logs/*.log.*
 !logs/.gitkeep
+
+*.drawio
