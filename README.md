@@ -109,11 +109,13 @@ docker compose config
 
 ## Local Development Without App Containers
 
-You can run only the support services in Docker:
+You can run the following support services separately & configure them in the .env accordingly
 
-```powershell
-docker compose up -d postgres qdrant minio minio-init
-```
+
+- postgres
+- qdrant
+- minio
+
 
 Then run the app from your machine:
 
