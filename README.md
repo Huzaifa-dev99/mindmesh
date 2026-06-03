@@ -36,7 +36,7 @@ On macOS/Linux:
 cp .env.example .env
 ```
 
-Add at least one LLM key. Groq is the simplest first option:
+Add at least one LLM key. Groq is the simplest first option (Get API Key > https://console.groq.com/keys):
 
 ```env
 GROQ_API_KEY=your-groq-api-key
